@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod extensions;
 pub mod files;
 pub mod schema;
+pub mod windows;
 
 use std::path::Path;
 use std::time::Duration;

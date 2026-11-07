@@ -94,6 +94,8 @@ pub struct Config {
     #[serde(default)]
     pub clipboard: ClipboardConfig,
     #[serde(default)]
+    pub windows: WindowsConfig,
+    #[serde(default)]
     pub tray: TrayConfig,
     #[serde(default)]
     pub mcp: McpConfig,
@@ -113,6 +115,7 @@ impl Default for Config {
             workspace: WorkspaceConfig::default(),
             search: SearchConfig::default(),
             clipboard: ClipboardConfig::default(),
+            windows: WindowsConfig::default(),
             tray: TrayConfig::default(),
             mcp: McpConfig::default(),
             extensions: ExtensionsConfig::default(),
@@ -217,6 +220,22 @@ impl Default for ClipboardConfig {
         Self {
             enabled: true,
             max_entries: default_clipboard_max(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsConfig {
+    /// Aplica regras por app automaticamente quando uma janela nova aparece.
+    #[serde(default = "default_true")]
+    pub auto_apply_rules: bool,
+}
+
+impl Default for WindowsConfig {
+    fn default() -> Self {
+        Self {
+            auto_apply_rules: true,
         }
     }
 }

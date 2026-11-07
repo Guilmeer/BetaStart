@@ -560,3 +560,51 @@ kbd {
   font-size: 11px;
   color: #fcd34d;
 }
+
+/* ---------- gerenciador de janelas ---------- */
+.windows {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px 24px;
+  overflow-y: auto;
+}
+
+.windows h2 {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #c9c9d4;
+}
+
+.monitor-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  color: #c9c9d4;
+}
+
+.monitor-index {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  background: rgba(139, 92, 246, 0.25);
+  border-radius: 6px;
+}
+
+.rule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+
+select.text-input {
+  appearance: none;
+}

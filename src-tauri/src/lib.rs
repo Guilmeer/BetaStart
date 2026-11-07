@@ -8,8 +8,11 @@ mod indexer;
 mod models;
 mod platform;
 mod state;
+mod window_manager;
+mod window_watcher;
 
 use tauri::Manager;
+use tauri_plugin_global_shortcut::ShortcutState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,9 +23,39 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        core::window::toggle(app);
+                .with_handler(|app, shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    let state = app.state::<state::AppState>();
+
+                    let launcher = state
+                        .config
+                        .lock()
+                        .map(|config| config.hotkeys.launcher.clone())
+                        .unwrap_or_default();
+                    if let Ok(parsed) = core::hotkey::parse_combo(&launcher) {
+                        if parsed == *shortcut {
+                            core::window::toggle(app);
+                            return;
+                        }
+                    }
+
+                    if let Ok(conn) = state.db.lock() {
+                        if let Ok(layouts) = db::windows::list_layouts(&conn) {
+                            for layout in layouts {
+                                if let Some(combo) = &layout.hotkey {
+                                    if let Ok(parsed) = core::hotkey::parse_combo(combo) {
+                                        if parsed == *shortcut {
+                                            let _ = window_manager::apply_layout_by_id(
+                                                &conn, layout.id,
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 })
                 .build(),
@@ -39,16 +72,15 @@ pub fn run() {
             let conn = db::open(&db_path)?;
             // Indexação de apps é rápida e roda de forma síncrona.
             let _ = db::apps::refresh(&conn);
+            let layout_hotkeys = db::windows::layout_hotkeys(&conn).unwrap_or_default();
 
             app.manage(state::AppState::new(config.clone(), conn));
 
             core::tray::setup(&handle)?;
 
-            if let Err(err) = core::hotkey::register(&handle, &config.hotkeys.launcher) {
-                eprintln!(
-                    "[betastart] falha ao registrar hotkey '{}': {err}",
-                    config.hotkeys.launcher
-                );
+            if let Err(err) = core::hotkey::sync(&handle, &config.hotkeys.launcher, &layout_hotkeys)
+            {
+                eprintln!("[betastart] falha ao registrar atalhos: {err}");
             }
 
             if config.start_menu.mode == "replace" {
@@ -70,6 +102,11 @@ pub fn run() {
             // Histórico de clipboard em segundo plano.
             if config.clipboard.enabled {
                 clipboard_watcher::start(db_path.clone(), config.clipboard.max_entries);
+            }
+
+            // Regras por app aplicadas a janelas novas.
+            if config.windows.auto_apply_rules {
+                window_watcher::start(db_path.clone());
             }
 
             Ok(())
@@ -102,6 +139,17 @@ pub fn run() {
             commands::runtime_status,
             commands::ensure_runtime,
             commands::list_store,
+            commands::list_monitors,
+            commands::list_windows_with_monitor,
+            commands::list_window_layouts,
+            commands::save_current_layout,
+            commands::delete_window_layout,
+            commands::apply_window_layout,
+            commands::set_window_layout_hotkey,
+            commands::list_window_rules,
+            commands::upsert_window_rule,
+            commands::delete_window_rule,
+            commands::apply_window_rules,
             commands::get_status,
             commands::show_launcher,
             commands::hide_launcher,

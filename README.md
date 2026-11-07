@@ -43,6 +43,7 @@ npm run tauri build
 - **Alt + Espaço** abre/fecha o launcher.
 - Digite para buscar **apps**, **arquivos**, **clipboard**, comandos de extensões e
   **calculadora** (ex.: `12*8+3`).
+- **🪟 Gerenciador de janelas**: salvar/aplicar layouts, regras por app e multi-monitor.
 - **⚙ Configurações**: trocar o atalho e o modo da tecla Win a qualquer momento.
 - **🧩 Extensões**: instalar/gerenciar extensões e o runtime Deno.
 - **Esc** fecha; fechar a janela manda para a bandeja.
@@ -68,6 +69,33 @@ Exemplo pronto em [`examples/hello-extension`](./examples/hello-extension).
 
 Também é possível instalar via **URL Git** ou pela **Loja** (um `index.json`, remoto ou
 local — veja [`examples/store/index.json`](./examples/store/index.json)).
+
+## Gerenciador de janelas
+
+Abra **🪟** na barra superior.
+
+### Layouts com hotkey
+
+1. Organize as janelas manualmente (ex.: navegador 25% à direita, Discord 75% à esquerda).
+2. Em **Layouts**, dê um nome e um atalho (ex.: `Win+Shift+F7`) e clique em **Salvar atual**.
+3. Pressione o atalho a qualquer momento para reaplicar o layout.
+
+O layout guarda, por janela, o processo e a posição relativa à **área útil do monitor**
+(excluindo a barra de tarefas), então funciona em diferentes resoluções e monitores.
+
+### Regras por app
+
+Configure app (processo/título/classe), monitor e região (`x/y/w/h` como frações de 0 a 1).
+As regras são aplicadas **automaticamente** quando uma janela nova do app aparece
+(watcher ~1,2s) ou manualmente em **Aplicar regras agora**.
+
+Exemplo: `chrome` no monitor 1, `x=0.75, y=0, w=0.25, h=1` (direita, 25%).
+`discord` no monitor 1, `x=0, y=0, w=0.75, h=1` (esquerda, 75%).
+
+### Multi-monitor
+
+Monitores são enumerados com resolução e área útil; layouts e regras guardam o índice
+do monitor. Janelas maximizadas são restauradas antes de serem reposicionadas.
 
 ### Runtime e segurança
 
@@ -144,7 +172,17 @@ examples/              # extensão de exemplo + índice de loja
 - [x] Tela 🧩 Extensões (instalar, ativar, aprovar, desinstalar)
 - [x] Extensão de exemplo + testes end-to-end
 
+**Fase 3 — Gerenciador de janelas**
+- [x] Enumeração de monitores com área útil (multi-monitor)
+- [x] Enumeração de janelas com nome do processo
+- [x] Salvar/restaurar layout atual
+- [x] Hotkey por layout (dispatcher de atalhos)
+- [x] Regras por app (processo/título/classe, monitor, frações)
+- [x] Watcher que aplica regras a janelas novas
+- [x] Tela 🪟 Gerenciador de janelas
+- [x] Testes (hotkeys `Win+...`, DAO de layouts/regras, enumeração Win32)
+
 ## Próximos passos
 
-Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 3 (gerenciador de janelas), Fase 4 (memória + tasks),
-Fase 5 (grafo), Fase 6 (MCP), Fase 7 (distribuição).
+Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 4 (memória + tasks), Fase 5 (grafo),
+Fase 6 (MCP), Fase 7 (distribuição).

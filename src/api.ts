@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppEntry,
+  ApplyResult,
   ClipEntry,
   Config,
   InstalledExtension,
+  MonitorInfo,
   PathsInfo,
   RunResult,
   RuntimeStatus,
@@ -11,6 +13,8 @@ import type {
   StatusInfo,
   StoreItem,
   WindowInfo,
+  WindowLayout,
+  WindowRule,
 } from "./types";
 
 /**
@@ -67,6 +71,23 @@ export const api = {
     invoke<StoreItem[]>("list_store", { url }),
 
   listOpenWindows: () => invoke<WindowInfo[]>("list_open_windows"),
+  listWindowsWithMonitor: () =>
+    invoke<WindowInfo[]>("list_windows_with_monitor"),
+  listMonitors: () => invoke<MonitorInfo[]>("list_monitors"),
+  listWindowLayouts: () => invoke<WindowLayout[]>("list_window_layouts"),
+  saveCurrentLayout: (name: string, hotkey: string | null) =>
+    invoke<WindowLayout>("save_current_layout", { name, hotkey }),
+  deleteWindowLayout: (id: number) =>
+    invoke<void>("delete_window_layout", { id }),
+  applyWindowLayout: (id: number) =>
+    invoke<ApplyResult>("apply_window_layout", { id }),
+  setWindowLayoutHotkey: (id: number, hotkey: string | null) =>
+    invoke<void>("set_window_layout_hotkey", { id, hotkey }),
+  listWindowRules: () => invoke<WindowRule[]>("list_window_rules"),
+  upsertWindowRule: (rule: WindowRule) =>
+    invoke<number>("upsert_window_rule", { rule }),
+  deleteWindowRule: (id: number) => invoke<void>("delete_window_rule", { id }),
+  applyWindowRules: () => invoke<ApplyResult>("apply_window_rules"),
 
   showLauncher: () => invoke<void>("show_launcher"),
   hideLauncher: () => invoke<void>("hide_launcher"),
@@ -76,9 +97,11 @@ export const api = {
 
 export type {
   AppEntry,
+  ApplyResult,
   ClipEntry,
   Config,
   InstalledExtension,
+  MonitorInfo,
   PathsInfo,
   RunResult,
   RuntimeStatus,
@@ -86,4 +109,6 @@ export type {
   StatusInfo,
   StoreItem,
   WindowInfo,
+  WindowLayout,
+  WindowRule,
 };

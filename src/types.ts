@@ -113,6 +113,55 @@ export interface StoreItem {
   source: string;
 }
 
+export interface MonitorInfo {
+  index: number;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  workX: number;
+  workY: number;
+  workWidth: number;
+  workHeight: number;
+  primary: boolean;
+}
+
+export interface LayoutSlot {
+  app: string | null;
+  matchField: string;
+  monitor: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface WindowLayout {
+  id: number;
+  name: string;
+  hotkey: string | null;
+  slots: LayoutSlot[];
+}
+
+export interface WindowRule {
+  id: number;
+  name: string;
+  appMatch: string;
+  matchField: string;
+  monitor: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  enabled: boolean;
+}
+
+export interface ApplyResult {
+  moved: number;
+  missed: string[];
+}
+
 export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface Config {
@@ -129,6 +178,7 @@ export interface Config {
     maxResults: number;
   };
   clipboard: { enabled: boolean; maxEntries: number };
+  windows: { autoApplyRules: boolean };
   tray: { showOnClose: boolean; startOnBoot: boolean; hideOnBlur: boolean };
   mcp: {
     enabled: boolean;

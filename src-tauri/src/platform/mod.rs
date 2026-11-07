@@ -38,6 +38,22 @@ pub struct WindowInfo {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorInfo {
+    pub index: i32,
+    pub name: String,
+    pub x: i64,
+    pub y: i64,
+    pub width: i64,
+    pub height: i64,
+    pub work_x: i64,
+    pub work_y: i64,
+    pub work_width: i64,
+    pub work_height: i64,
+    pub primary: bool,
+}
+
 /// Abre um aplicativo/arquivo com o handler padrão do sistema.
 #[cfg(target_os = "windows")]
 pub fn launch(path: &str) -> Result<(), crate::error::AppError> {

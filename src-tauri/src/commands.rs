@@ -9,8 +9,9 @@ use crate::extensions;
 use crate::models::{
     ClipEntry, InstalledExtension, RunResult, RuntimeStatus, SearchResults, StoreItem,
 };
-use crate::platform::{self, AppEntry, WindowInfo};
+use crate::platform::{self, AppEntry, MonitorInfo, WindowInfo};
 use crate::state::AppState;
+use crate::window_manager::{self, ApplyResult, WindowLayout, WindowRule};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +57,27 @@ fn apply_patch(app: &AppHandle, state: &AppState, patch: serde_json::Value) -> A
         .lock()
         .map_err(|_| AppError::Config("config lock envenenado".into()))? = updated.clone();
     Ok(updated)
+}
+
+/// Re-registra o atalho do launcher + os atalhos de todos os layouts.
+fn reload_shortcuts(app: &AppHandle, state: &AppState) -> AppResult<()> {
+    let launcher = state
+        .config
+        .lock()
+        .map_err(|_| AppError::Config("config lock envenenado".into()))?
+        .hotkeys
+        .launcher
+        .clone();
+
+    let layout_hotkeys = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::layout_hotkeys(&conn)?
+    };
+
+    crate::core::hotkey::sync(app, &launcher, &layout_hotkeys).map_err(AppError::Platform)
 }
 
 /// Avalia uma expressão matemática simples para o resultado de calculadora.
@@ -147,8 +169,16 @@ pub fn apply_launcher_settings(
         .launcher
         .clone();
 
-    if let Err(err) = crate::core::hotkey::reregister(&app, &hotkey) {
-        let _ = crate::core::hotkey::register(&app, &old_combo);
+    let layout_hotkeys = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::layout_hotkeys(&conn)?
+    };
+
+    if let Err(err) = crate::core::hotkey::sync(&app, &hotkey, &layout_hotkeys) {
+        let _ = crate::core::hotkey::sync(&app, &old_combo, &layout_hotkeys);
         return Err(AppError::Config(format!(
             "não foi possível registrar '{hotkey}': {err}"
         )));
@@ -156,7 +186,7 @@ pub fn apply_launcher_settings(
 
     if mode == "replace" {
         if let Err(err) = crate::core::win_hook::install(app.clone()) {
-            let _ = crate::core::hotkey::register(&app, &old_combo);
+            let _ = crate::core::hotkey::sync(&app, &old_combo, &layout_hotkeys);
             return Err(AppError::Platform(format!("hook da tecla Win: {err}")));
         }
     } else {
@@ -666,6 +696,139 @@ fn fetch_text(target: &str) -> Result<String, String> {
         let path = paths::expand(target);
         std::fs::read_to_string(path).map_err(|e| e.to_string())
     }
+}
+
+#[tauri::command]
+pub fn list_monitors() -> Vec<MonitorInfo> {
+    window_manager::list_monitors()
+}
+
+#[tauri::command]
+pub fn list_windows_with_monitor() -> Vec<WindowInfo> {
+    let monitors = window_manager::list_monitors();
+    window_manager::snapshot_windows(&monitors)
+}
+
+#[tauri::command]
+pub fn list_window_layouts(state: State<AppState>) -> AppResult<Vec<WindowLayout>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::windows::list_layouts(&conn)
+}
+
+#[tauri::command]
+pub fn save_current_layout(
+    app: AppHandle,
+    state: State<AppState>,
+    name: String,
+    hotkey: Option<String>,
+) -> AppResult<WindowLayout> {
+    let monitors = window_manager::list_monitors();
+    let slots = window_manager::capture_layout(&monitors);
+    if slots.is_empty() {
+        return Err(AppError::Platform(
+            "nenhuma janela capturável encontrada".into(),
+        ));
+    }
+    let hotkey = hotkey.filter(|value| !value.trim().is_empty());
+
+    let id = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::save_layout(&conn, &name, hotkey.as_deref(), &monitors, &slots)?
+    };
+
+    reload_shortcuts(&app, state.inner())?;
+
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::windows::get_layout(&conn, id)?
+        .ok_or_else(|| AppError::NotFound("layout não encontrado".into()))
+}
+
+#[tauri::command]
+pub fn delete_window_layout(app: AppHandle, state: State<AppState>, id: i64) -> AppResult<()> {
+    {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::delete_layout(&conn, id)?;
+    }
+    reload_shortcuts(&app, state.inner())
+}
+
+#[tauri::command]
+pub fn apply_window_layout(state: State<AppState>, id: i64) -> AppResult<ApplyResult> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    window_manager::apply_layout_by_id(&conn, id).map_err(AppError::Platform)
+}
+
+#[tauri::command]
+pub fn set_window_layout_hotkey(
+    app: AppHandle,
+    state: State<AppState>,
+    id: i64,
+    hotkey: Option<String>,
+) -> AppResult<()> {
+    let hotkey = hotkey.filter(|value| !value.trim().is_empty());
+    {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::set_layout_hotkey(&conn, id, hotkey.as_deref())?;
+    }
+    reload_shortcuts(&app, state.inner())
+}
+
+#[tauri::command]
+pub fn list_window_rules(state: State<AppState>) -> AppResult<Vec<WindowRule>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::windows::list_rules(&conn)
+}
+
+#[tauri::command]
+pub fn upsert_window_rule(state: State<AppState>, rule: WindowRule) -> AppResult<i64> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::windows::upsert_rule(&conn, &rule)
+}
+
+#[tauri::command]
+pub fn delete_window_rule(state: State<AppState>, id: i64) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::windows::delete_rule(&conn, id)
+}
+
+#[tauri::command]
+pub fn apply_window_rules(state: State<AppState>) -> AppResult<ApplyResult> {
+    let rules = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::list_rules(&conn)?
+    };
+    let monitors = window_manager::list_monitors();
+    Ok(window_manager::apply_rules(&rules, &monitors))
 }
 
 #[tauri::command]

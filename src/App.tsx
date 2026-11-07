@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api } from "./api";
 import { Extensions } from "./Extensions";
+import { WindowManager } from "./WindowManager";
 import type { Config, SearchResults, StatusInfo } from "./types";
 
-type Screen = "search" | "onboarding" | "settings" | "extensions";
+type Screen = "search" | "onboarding" | "settings" | "extensions" | "windows";
 
 type Row =
   | { kind: "calculator"; key: string; title: string; subtitle: string; value: string }
@@ -215,7 +216,7 @@ function App() {
   // Atalhos de teclado globais.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (screen === "settings" || screen === "extensions") {
+      if (screen !== "search" && screen !== "onboarding") {
         if (event.key === "Escape") setScreen("search");
         return;
       }
@@ -302,6 +303,15 @@ function App() {
               ? `${status.appsIndexed} apps · ${status.filesIndexed} arq · ${status.clipboardCount} clips · ${status.extensionsCount} ext`
               : "carregando…"}
           </span>
+          <button
+            className="icon-btn"
+            title="Gerenciador de janelas"
+            onClick={() =>
+              setScreen(screen === "windows" ? "search" : "windows")
+            }
+          >
+            🪟
+          </button>
           <button
             className="icon-btn"
             title="Extensões"
@@ -436,6 +446,10 @@ function App() {
 
       {screen === "extensions" && (
         <Extensions onBack={() => setScreen("search")} />
+      )}
+
+      {screen === "windows" && (
+        <WindowManager onBack={() => setScreen("search")} />
       )}
 
       {screen === "search" && (
