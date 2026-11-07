@@ -3,6 +3,7 @@ mod commands;
 mod core;
 mod db;
 mod error;
+mod extensions;
 mod indexer;
 mod models;
 mod platform;
@@ -92,6 +93,15 @@ pub fn run() {
             commands::list_open_windows,
             commands::rebuild_apps_index,
             commands::rebuild_files_index,
+            commands::list_extensions,
+            commands::install_extension,
+            commands::uninstall_extension,
+            commands::set_extension_enabled,
+            commands::set_extension_permissions,
+            commands::run_extension_command,
+            commands::runtime_status,
+            commands::ensure_runtime,
+            commands::list_store,
             commands::get_status,
             commands::show_launcher,
             commands::hide_launcher,

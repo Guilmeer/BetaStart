@@ -45,15 +45,17 @@ exposto a IAs via MCP.
 |---|---|---|
 | Backend / núcleo | **Rust** (Tauri 2) | Acesso a Win32, hook de teclado, janelas, MCP |
 | Frontend (UI) | **React + TypeScript** | Janela flutuante, settings, memória/grafo, loja |
-| Extensões | **TypeScript/JavaScript** rodando em **Deno (`deno_core`)** embutido | Processo isolado, permissões |
+| Extensões | **TypeScript/JavaScript** rodando em **Deno como processo sidecar** | Processo isolado, permissões por flag |
 | Persistência auxiliar | **SQLite** (via `rusqlite`) | Índices, clipboard, tasks, tokens MCP |
 | Configuração | **JSON** (`config.json`) | Preferências, hotkeys, layouts legíveis |
 | Distribuição | **Instalador (NSIS/WiX/MSI) + Tauri updater** | Auto-update via GitHub Releases |
 
 **Por que Tauri 2:** binário pequeno (~10–15 MB), baixo consumo de RAM (crítico para um app
 residente), backend Rust com ótimo acesso a APIs de sistema, e frontend web reaproveitável.
-**Por que Deno embutido:** TS nativo, ESM, suporte a npm, flags de permissão por extensão e
-isolamento por worker, tudo dentro do processo Rust via `deno_core`.
+**Por que Deno (sidecar):** TS nativo, ESM e flags de permissão por extensão. Cada comando roda
+em um processo Deno separado, então um crash ou abuso de uma extensão não derruba o app. O
+embedding via `deno_core` (V8 in-process) continua como opção futura caso se queira remover a
+dependência de um runtime externo.
 
 ---
 
@@ -665,7 +667,7 @@ A camada `platform` (módulo 2) é a única que muda entre SOs; todo o resto é 
 | # | Decisão | Motivo |
 |---|---|---|
 | ADR-001 | Tauri 2 (Rust + React) | footprint baixo, app residente, acesso a sistema |
-| ADR-002 | Extensões TS/JS em Deno (`deno_core`) | TS nativo, permissões, isolamento, alinha com Raycast |
+| ADR-002 | Extensões TS/JS em Deno **sidecar** (processo isolado) | TS nativo, permissões por flag, isolamento forte; `deno_core` fica como opção futura |
 | ADR-003 | Memória = arquivos Markdown em disco | transparência, Git, portabilidade |
 | ADR-004 | Tasks = `.md` com frontmatter | unifica memória e tasks no mesmo ambiente |
 | ADR-005 | SQLite p/ índices + JSON p/ config | busca rápida sem prender dados do usuário |

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "betastart/hello",
+  "name": "Hello Beta Start",
+  "version": "0.1.0",
+  "description": "Extensão de exemplo: saudação e cópia da data atual.",
+  "author": "Beta Start",
+  "entry": "main.ts",
+  "commands": [
+    {
+      "id": "hello",
+      "title": "Hello Beta Start",
+      "subtitle": "Mostra uma saudação",
+      "mode": "no-view",
+      "keywords": ["hello", "oi", "saudacao"]
+    },
+    {
+      "id": "copy-date",
+      "title": "Copiar data atual",
+      "subtitle": "Copia a data em formato ISO",
+      "mode": "no-view",
+      "keywords": ["data", "date", "iso", "hoje"]
+    }
+  ],
+  "permissions": ["clipboard:write"]
+}

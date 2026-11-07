@@ -1,0 +1,10 @@
+[
+  {
+    "id": "betastart/hello",
+    "name": "Hello Beta Start",
+    "version": "0.1.0",
+    "description": "Extensão de exemplo com saudação e cópia da data.",
+    "url": "E:/DOCUMENTOS/Opencode/BetterStart/examples/hello-extension",
+    "source": "local"
+  }
+]

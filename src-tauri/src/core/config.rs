@@ -50,6 +50,10 @@ fn default_theme() -> String {
     "auto".into()
 }
 
+fn default_store_url() -> String {
+    "https://raw.githubusercontent.com/betastart-org/extensions/main/index.json".into()
+}
+
 fn default_workspace_path() -> String {
     let base = dirs::document_dir()
         .or_else(dirs::home_dir)
@@ -94,6 +98,8 @@ pub struct Config {
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
+    pub extensions: ExtensionsConfig,
+    #[serde(default)]
     pub appearance: AppearanceConfig,
 }
 
@@ -109,6 +115,7 @@ impl Default for Config {
             clipboard: ClipboardConfig::default(),
             tray: TrayConfig::default(),
             mcp: McpConfig::default(),
+            extensions: ExtensionsConfig::default(),
             appearance: AppearanceConfig::default(),
         }
     }
@@ -292,6 +299,26 @@ impl Default for McpConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExtensionsConfig {
+    /// URL (http/https) ou caminho local do `index.json` da loja.
+    #[serde(default = "default_store_url")]
+    pub store_url: String,
+    /// Caminho explícito para o executável do Deno (opcional).
+    #[serde(default)]
+    pub deno_path: Option<String>,
+}
+
+impl Default for ExtensionsConfig {
+    fn default() -> Self {
+        Self {
+            store_url: default_store_url(),
+            deno_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppearanceConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -312,8 +339,11 @@ impl Config {
         if path.exists() {
             let raw = std::fs::read_to_string(path)?;
             let mut cfg: Config = serde_json::from_str(&raw)?;
-            if cfg.normalize() {
-                let _ = cfg.save(path);
+            cfg.normalize();
+            // Persiste defaults novos (ex.: seção `extensions`) e migrações.
+            let serialized = serde_json::to_string_pretty(&cfg)?;
+            if serialized != raw {
+                std::fs::write(path, serialized)?;
             }
             Ok(cfg)
         } else {

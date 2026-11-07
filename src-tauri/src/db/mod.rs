@@ -3,6 +3,7 @@
 
 pub mod apps;
 pub mod clipboard;
+pub mod extensions;
 pub mod files;
 pub mod schema;
 

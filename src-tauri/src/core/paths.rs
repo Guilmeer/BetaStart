@@ -40,3 +40,23 @@ pub fn ensure_workspace(path: &str) -> AppResult<PathBuf> {
     }
     Ok(root)
 }
+
+/// Pasta onde as extensões ficam instaladas.
+pub fn extensions_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app_data_dir(app)?.join("extensions");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Pasta do runtime (assets do runner + Deno gerenciado).
+pub fn runtime_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("BetaStart")
+        .join("runtime")
+}
+
+/// Pasta temporária para payload/resultado das execuções de extensão.
+pub fn ext_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("betastart-ext")
+}

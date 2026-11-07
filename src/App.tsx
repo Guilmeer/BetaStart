@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api } from "./api";
+import { Extensions } from "./Extensions";
 import type { Config, SearchResults, StatusInfo } from "./types";
 
-type Screen = "search" | "onboarding" | "settings";
+type Screen = "search" | "onboarding" | "settings" | "extensions";
 
 type Row =
   | { kind: "calculator"; key: string; title: string; subtitle: string; value: string }
   | { kind: "app"; key: string; title: string; subtitle: string; path: string }
   | { kind: "file"; key: string; title: string; subtitle: string; path: string }
-  | { kind: "clipboard"; key: string; title: string; subtitle: string; text: string };
+  | { kind: "clipboard"; key: string; title: string; subtitle: string; text: string }
+  | {
+      kind: "command";
+      key: string;
+      title: string;
+      subtitle: string;
+      extId: string;
+      commandId: string;
+    };
 
 function badgeLabel(kind: Row["kind"]): string {
   switch (kind) {
@@ -21,6 +30,8 @@ function badgeLabel(kind: Row["kind"]): string {
       return "C";
     case "calculator":
       return "=";
+    case "command":
+      return "›";
   }
 }
 
@@ -32,6 +43,7 @@ function App() {
   const [results, setResults] = useState<SearchResults | null>(null);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
 
   const [mode, setMode] = useState<"off" | "replace">("off");
   const [hotkey, setHotkey] = useState("Alt+Space");
@@ -72,7 +84,6 @@ function App() {
     void load();
   }, [load]);
 
-  // Foco conforme a tela.
   useEffect(() => {
     if (screen === "search") {
       inputRef.current?.focus();
@@ -104,7 +115,13 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [query, screen]);
 
-  // Resultados achatados (calculadora → apps → arquivos → clipboard).
+  // Toast some sozinho.
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
   const rows = useMemo<Row[]>(() => {
     if (!results) return [];
     const out: Row[] = [];
@@ -146,6 +163,17 @@ function App() {
         text: clip.text ?? "",
       });
     }
+    for (const command of results.commands) {
+      out.push({
+        kind: "command",
+        key: `cmd:${command.extId}:${command.commandId}`,
+        title: command.title,
+        subtitle:
+          command.subtitle ?? `${command.extId} › ${command.commandId}`,
+        extId: command.extId,
+        commandId: command.commandId,
+      });
+    }
     return out;
   }, [results]);
 
@@ -154,17 +182,31 @@ function App() {
       try {
         if (row.kind === "app") {
           await api.launchApp(row.path);
+          await api.hideLauncher();
         } else if (row.kind === "file") {
           await api.openPath(row.path);
+          await api.hideLauncher();
         } else if (row.kind === "calculator") {
           await api.copyText(row.value);
-        } else {
+          await api.hideLauncher();
+        } else if (row.kind === "clipboard") {
           await api.copyText(row.text);
+          await api.hideLauncher();
+        } else {
+          const result = await api.runExtensionCommand(
+            row.extId,
+            row.commandId,
+            {},
+          );
+          if (result.kind === "message") {
+            setToast(result.text ?? "Comando executado.");
+            return;
+          }
+          await api.hideLauncher();
         }
-        await api.hideLauncher();
         await refreshStatus();
       } catch (error) {
-        console.error("Falha ao executar item:", error);
+        setToast(String(error));
       }
     },
     [refreshStatus],
@@ -173,7 +215,7 @@ function App() {
   // Atalhos de teclado globais.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (screen === "settings") {
+      if (screen === "settings" || screen === "extensions") {
         if (event.key === "Escape") setScreen("search");
         return;
       }
@@ -257,9 +299,18 @@ function App() {
         <div className="topbar-right">
           <span className="status">
             {status
-              ? `${status.appsIndexed} apps · ${status.filesIndexed} arq · ${status.clipboardCount} clips`
+              ? `${status.appsIndexed} apps · ${status.filesIndexed} arq · ${status.clipboardCount} clips · ${status.extensionsCount} ext`
               : "carregando…"}
           </span>
+          <button
+            className="icon-btn"
+            title="Extensões"
+            onClick={() =>
+              setScreen(screen === "extensions" ? "search" : "extensions")
+            }
+          >
+            🧩
+          </button>
           <button
             className="icon-btn"
             title="Configurações"
@@ -383,6 +434,10 @@ function App() {
         </section>
       )}
 
+      {screen === "extensions" && (
+        <Extensions onBack={() => setScreen("search")} />
+      )}
+
       {screen === "search" && (
         <>
           <input
@@ -434,6 +489,8 @@ function App() {
           </footer>
         </>
       )}
+
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

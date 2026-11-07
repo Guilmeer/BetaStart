@@ -63,9 +63,54 @@ export interface StatusInfo {
   appsIndexed: number;
   filesIndexed: number;
   clipboardCount: number;
+  extensionsCount: number;
   openWindows: number;
   winHookActive: boolean;
   paths: PathsInfo;
+}
+
+export interface ManifestCommand {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  keywords: string[];
+  mode: string;
+  icon: string | null;
+}
+
+export interface InstalledExtension {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  installSource: string;
+  installPath: string;
+  enabled: boolean;
+  permissions: string[];
+  granted: string[];
+  pending: boolean;
+  commands: ManifestCommand[];
+}
+
+export interface RunResult {
+  kind: string;
+  text: string | null;
+}
+
+export interface RuntimeStatus {
+  available: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+export interface StoreItem {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  url: string;
+  source: string;
 }
 
 export type StartMenuMode = "ask" | "replace" | "off";
@@ -90,5 +135,6 @@ export interface Config {
     stdio: { enabled: boolean };
     http: { enabled: boolean; host: string; port: number };
   };
+  extensions: { storeUrl: string; denoPath: string | null };
   appearance: { theme: string };
 }

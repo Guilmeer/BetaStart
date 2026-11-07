@@ -3,9 +3,13 @@ import type {
   AppEntry,
   ClipEntry,
   Config,
+  InstalledExtension,
   PathsInfo,
+  RunResult,
+  RuntimeStatus,
   SearchResults,
   StatusInfo,
+  StoreItem,
   WindowInfo,
 } from "./types";
 
@@ -39,6 +43,29 @@ export const api = {
   pinClipboard: (id: number, pinned: boolean) =>
     invoke<void>("pin_clipboard", { id, pinned }),
 
+  listExtensions: () => invoke<InstalledExtension[]>("list_extensions"),
+  installExtension: (request: { kind: string; value: string }) =>
+    invoke<InstalledExtension>("install_extension", { request }),
+  uninstallExtension: (extId: string) =>
+    invoke<void>("uninstall_extension", { extId }),
+  setExtensionEnabled: (extId: string, enabled: boolean) =>
+    invoke<void>("set_extension_enabled", { extId, enabled }),
+  setExtensionPermissions: (extId: string, permissions: string[]) =>
+    invoke<InstalledExtension>("set_extension_permissions", {
+      extId,
+      permissions,
+    }),
+  runExtensionCommand: (
+    extId: string,
+    commandId: string,
+    args: unknown = {},
+  ) =>
+    invoke<RunResult>("run_extension_command", { extId, commandId, args }),
+  runtimeStatus: () => invoke<RuntimeStatus>("runtime_status"),
+  ensureRuntime: () => invoke<RuntimeStatus>("ensure_runtime"),
+  listStore: (url: string | null = null) =>
+    invoke<StoreItem[]>("list_store", { url }),
+
   listOpenWindows: () => invoke<WindowInfo[]>("list_open_windows"),
 
   showLauncher: () => invoke<void>("show_launcher"),
@@ -51,8 +78,12 @@ export type {
   AppEntry,
   ClipEntry,
   Config,
+  InstalledExtension,
   PathsInfo,
+  RunResult,
+  RuntimeStatus,
   SearchResults,
   StatusInfo,
+  StoreItem,
   WindowInfo,
 };

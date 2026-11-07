@@ -5,7 +5,10 @@ use crate::core::config::Config;
 use crate::core::paths;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::models::{ClipEntry, SearchResults};
+use crate::extensions;
+use crate::models::{
+    ClipEntry, InstalledExtension, RunResult, RuntimeStatus, SearchResults, StoreItem,
+};
 use crate::platform::{self, AppEntry, WindowInfo};
 use crate::state::AppState;
 
@@ -24,6 +27,7 @@ pub struct StatusInfo {
     pub apps_indexed: i64,
     pub files_indexed: i64,
     pub clipboard_count: i64,
+    pub extensions_count: i64,
     pub open_windows: usize,
     pub win_hook_active: bool,
     pub paths: PathsInfo,
@@ -205,12 +209,17 @@ pub fn search(
     } else {
         db::clipboard::search(&conn, q, 4)?
     };
+    let commands = if q.is_empty() {
+        Vec::new()
+    } else {
+        db::extensions::commands(&conn, q, 5)?
+    };
 
     Ok(SearchResults {
         apps,
         files,
         clipboard,
-        commands: Vec::new(),
+        commands,
         calculation: calculate(q),
     })
 }
@@ -327,7 +336,7 @@ pub fn get_status(app: AppHandle, state: State<AppState>) -> AppResult<StatusInf
         .map_err(|_| AppError::Config("config lock envenenado".into()))?
         .clone();
 
-    let (apps_indexed, files_indexed, clipboard_count) = {
+    let (apps_indexed, files_indexed, clipboard_count, extensions_count) = {
         let conn = state
             .db
             .lock()
@@ -339,7 +348,8 @@ pub fn get_status(app: AppHandle, state: State<AppState>) -> AppResult<StatusInf
             .unwrap_or(0);
         let files = db::files::count(&conn).unwrap_or(0);
         let clips = db::clipboard::count(&conn).unwrap_or(0);
-        (apps, files, clips)
+        let exts = db::extensions::count(&conn).unwrap_or(0);
+        (apps, files, clips, exts)
     };
 
     Ok(StatusInfo {
@@ -347,10 +357,315 @@ pub fn get_status(app: AppHandle, state: State<AppState>) -> AppResult<StatusInf
         apps_indexed,
         files_indexed,
         clipboard_count,
+        extensions_count,
         open_windows: platform::windows::list_open_windows().len(),
         win_hook_active: crate::core::win_hook::is_installed(),
         paths: paths_info(&app, &cfg)?,
     })
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallRequest {
+    pub kind: String,
+    pub value: String,
+}
+
+#[tauri::command]
+pub fn list_extensions(state: State<AppState>) -> AppResult<Vec<InstalledExtension>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::extensions::list(&conn)
+}
+
+#[tauri::command]
+pub fn install_extension(
+    app: AppHandle,
+    state: State<AppState>,
+    request: InstallRequest,
+) -> AppResult<InstalledExtension> {
+    let root = paths::extensions_dir(&app)?;
+    let manifest = match request.kind.as_str() {
+        "local" => extensions::install_from_dir(&root, std::path::Path::new(&request.value)),
+        "git" => extensions::install_from_git(&root, &request.value),
+        other => {
+            return Err(AppError::Config(format!(
+                "tipo de instalação desconhecido: {other}"
+            )));
+        }
+    }
+    .map_err(AppError::Platform)?;
+
+    let destination = root.join(extensions::folder_name(&manifest.id));
+    {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::extensions::upsert(
+            &conn,
+            &manifest,
+            &request.kind,
+            Some(&request.value),
+            &destination.to_string_lossy(),
+        )?;
+    }
+
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::extensions::get_installed(&conn, &manifest.id)?
+        .ok_or_else(|| AppError::NotFound("extensão não encontrada após instalar".into()))
+}
+
+#[tauri::command]
+pub fn uninstall_extension(
+    app: AppHandle,
+    state: State<AppState>,
+    ext_id: String,
+) -> AppResult<()> {
+    let root = paths::extensions_dir(&app)?;
+    extensions::uninstall(&root, &ext_id).map_err(AppError::Platform)?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::extensions::remove(&conn, &ext_id)
+}
+
+#[tauri::command]
+pub fn set_extension_enabled(
+    state: State<AppState>,
+    ext_id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::extensions::set_enabled(&conn, &ext_id, enabled)
+}
+
+#[tauri::command]
+pub fn set_extension_permissions(
+    state: State<AppState>,
+    ext_id: String,
+    permissions: Vec<String>,
+) -> AppResult<InstalledExtension> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::extensions::set_permissions(&conn, &ext_id, &permissions)?;
+    db::extensions::get_installed(&conn, &ext_id)?
+        .ok_or_else(|| AppError::NotFound("extensão não encontrada".into()))
+}
+
+#[tauri::command]
+pub fn run_extension_command(
+    state: State<AppState>,
+    ext_id: String,
+    command_id: String,
+    args: Option<serde_json::Value>,
+) -> AppResult<RunResult> {
+    let cfg = state
+        .config
+        .lock()
+        .map_err(|_| AppError::Config("config lock envenenado".into()))?
+        .clone();
+
+    let row = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::extensions::get_row(&conn, &ext_id)?
+            .ok_or_else(|| AppError::NotFound("extensão não instalada".into()))?
+    };
+
+    if !row.enabled {
+        return Err(AppError::Platform("extensão desabilitada".into()));
+    }
+    if row.pending {
+        return Err(AppError::Platform(
+            "permissões da extensão não aprovadas".into(),
+        ));
+    }
+    if !row.manifest.commands.iter().any(|c| c.id == command_id) {
+        return Err(AppError::NotFound("comando não encontrado".into()));
+    }
+
+    let deno =
+        extensions::runtime::find_deno(cfg.extensions.deno_path.as_deref()).ok_or_else(|| {
+            AppError::Platform(
+                "runtime Deno não encontrado. Instale em Configurações > Extensões.".into(),
+            )
+        })?;
+
+    let workspace = paths::expand(&cfg.workspace.path);
+    let outcome = extensions::runtime::run_command(
+        &deno,
+        &paths::runtime_dir(),
+        std::path::Path::new(&row.install_path),
+        &row.manifest,
+        &command_id,
+        args.unwrap_or(serde_json::Value::Null),
+        &row.granted,
+        Some(&workspace),
+    )
+    .map_err(AppError::Platform)?;
+
+    if !outcome.ok {
+        return Err(AppError::Platform(
+            outcome.error.unwrap_or_else(|| "falha na extensão".into()),
+        ));
+    }
+
+    if let Some(toast) = outcome.toast {
+        return Ok(RunResult {
+            kind: "message".into(),
+            text: Some(toast),
+        });
+    }
+
+    let result = outcome.result;
+    if let Some(object) = result.as_object() {
+        match object.get("type").and_then(|value| value.as_str()) {
+            Some("copy") => {
+                if !row.granted.iter().any(|p| p == "clipboard:write") {
+                    return Err(AppError::Platform(
+                        "permissão 'clipboard:write' não concedida".into(),
+                    ));
+                }
+                let text = object
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut clipboard =
+                    arboard::Clipboard::new().map_err(|e| AppError::Platform(e.to_string()))?;
+                clipboard
+                    .set_text(text.clone())
+                    .map_err(|e| AppError::Platform(e.to_string()))?;
+                return Ok(RunResult {
+                    kind: "copy".into(),
+                    text: Some(text),
+                });
+            }
+            Some("open") => {
+                if !row.granted.iter().any(|p| p == "shell") {
+                    return Err(AppError::Platform("permissão 'shell' não concedida".into()));
+                }
+                let path = object
+                    .get("path")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                platform::launch(path)?;
+                return Ok(RunResult {
+                    kind: "opened".into(),
+                    text: None,
+                });
+            }
+            Some("message") => {
+                let text = object
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                return Ok(RunResult {
+                    kind: "message".into(),
+                    text: Some(text),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(text) = result.as_str() {
+        return Ok(RunResult {
+            kind: "message".into(),
+            text: Some(text.to_string()),
+        });
+    }
+
+    Ok(RunResult {
+        kind: "done".into(),
+        text: None,
+    })
+}
+
+#[tauri::command]
+pub fn runtime_status(state: State<AppState>) -> AppResult<RuntimeStatus> {
+    let configured = state
+        .config
+        .lock()
+        .map_err(|_| AppError::Config("config lock envenenado".into()))?
+        .extensions
+        .deno_path
+        .clone();
+    let found = extensions::runtime::find_deno(configured.as_deref());
+    Ok(RuntimeStatus {
+        available: found.is_some(),
+        path: found.as_ref().map(|path| path.display().to_string()),
+        version: found
+            .as_ref()
+            .and_then(|path| extensions::runtime::version(path)),
+    })
+}
+
+#[tauri::command]
+pub async fn ensure_runtime(state: State<'_, AppState>) -> AppResult<RuntimeStatus> {
+    let configured = state
+        .config
+        .lock()
+        .map_err(|_| AppError::Config("config lock envenenado".into()))?
+        .extensions
+        .deno_path
+        .clone();
+
+    let deno = tauri::async_runtime::spawn_blocking(move || {
+        extensions::runtime::ensure_deno(configured.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Platform(e.to_string()))?
+    .map_err(AppError::Platform)?;
+
+    Ok(RuntimeStatus {
+        available: true,
+        path: Some(deno.display().to_string()),
+        version: extensions::runtime::version(&deno),
+    })
+}
+
+#[tauri::command]
+pub fn list_store(state: State<AppState>, url: Option<String>) -> AppResult<Vec<StoreItem>> {
+    let configured = state
+        .config
+        .lock()
+        .map_err(|_| AppError::Config("config lock envenenado".into()))?
+        .extensions
+        .store_url
+        .clone();
+    let target = url
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(configured);
+    let raw = fetch_text(&target).map_err(AppError::Platform)?;
+    let items: Vec<StoreItem> = serde_json::from_str(&raw)
+        .map_err(|e| AppError::Config(format!("índice da loja inválido: {e}")))?;
+    Ok(items)
+}
+
+fn fetch_text(target: &str) -> Result<String, String> {
+    if target.starts_with("http://") || target.starts_with("https://") {
+        let response = ureq::get(target).call().map_err(|e| e.to_string())?;
+        response.into_string().map_err(|e| e.to_string())
+    } else {
+        let path = paths::expand(target);
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
