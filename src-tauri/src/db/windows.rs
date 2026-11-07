@@ -213,6 +213,12 @@ mod tests {
             y: 0.0,
             w: 0.25,
             h: 1.0,
+            x_px: Some(1440),
+            y_px: Some(0),
+            w_px: Some(480),
+            h_px: Some(1040),
+            work_width: Some(1920),
+            work_height: Some(1040),
         }];
 
         let id = save_layout(&conn, "teste", Some("Win+Shift+F7"), &monitors, &slots)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api } from "./api";
 import { Extensions } from "./Extensions";
+import { HotkeyInput } from "./HotkeyInput";
 import { WindowManager } from "./WindowManager";
 import type { Config, SearchResults, StatusInfo } from "./types";
 
@@ -52,7 +53,6 @@ function App() {
   const [settingsBusy, setSettingsBusy] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const settingsInputRef = useRef<HTMLInputElement>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -88,8 +88,6 @@ function App() {
   useEffect(() => {
     if (screen === "search") {
       inputRef.current?.focus();
-    } else if (screen === "settings") {
-      settingsInputRef.current?.focus();
     }
   }, [screen]);
 
@@ -216,6 +214,8 @@ function App() {
   // Atalhos de teclado globais.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Não interfere enquanto o usuário está gravando uma hotkey.
+      if (document.body.dataset.recordingHotkey === "true") return;
       if (screen !== "search" && screen !== "onboarding") {
         if (event.key === "Escape") setScreen("search");
         return;
@@ -370,20 +370,18 @@ function App() {
         <section className="settings">
           <h1>Configurações</h1>
 
-          <label className="field">
+          <div className="field">
             <span className="field-label">Atalho do launcher</span>
-            <input
-              ref={settingsInputRef}
-              className="text-input"
+            <HotkeyInput
               value={hotkey}
-              onChange={(event) => setHotkey(event.target.value)}
-              placeholder="Ex.: Alt+Space"
-              spellCheck={false}
+              onChange={(combo) => setHotkey(combo)}
+              excludeLauncher
+              placeholder="Clique e pressione o atalho (ex.: Alt+Space)"
             />
             <span className="field-hint">
-              Aceita combinações como Ctrl+Shift+Space. Padrão: Alt+Space.
+              Clique no campo e pressione a combinação desejada. Padrão: Alt+Space.
             </span>
-          </label>
+          </div>
 
           <div className="field">
             <span className="field-label">Tecla Windows</span>

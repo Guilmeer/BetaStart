@@ -80,6 +80,88 @@ fn reload_shortcuts(app: &AppHandle, state: &AppState) -> AppResult<()> {
     crate::core::hotkey::sync(app, &launcher, &layout_hotkeys).map_err(AppError::Platform)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeyValidation {
+    pub valid: bool,
+    pub conflict: Option<String>,
+}
+
+/// Valida uma combinação contra o launcher, layouts e o próprio sistema.
+fn validate_hotkey_inner(
+    app: &AppHandle,
+    state: &AppState,
+    combo: &str,
+    exclude_layout_id: Option<i64>,
+    exclude_launcher: bool,
+) -> AppResult<HotkeyValidation> {
+    let combo = combo.trim();
+    if combo.is_empty() {
+        return Ok(HotkeyValidation {
+            valid: false,
+            conflict: Some("atalho vazio".into()),
+        });
+    }
+    if crate::core::hotkey::parse_combo(combo).is_err() {
+        return Ok(HotkeyValidation {
+            valid: false,
+            conflict: Some("combinação inválida".into()),
+        });
+    }
+
+    if !exclude_launcher {
+        let launcher = state
+            .config
+            .lock()
+            .map_err(|_| AppError::Config("config lock envenenado".into()))?
+            .hotkeys
+            .launcher
+            .clone();
+        if crate::core::hotkey::same(combo, &launcher) {
+            return Ok(HotkeyValidation {
+                valid: false,
+                conflict: Some("já usado pelo atalho do launcher".into()),
+            });
+        }
+    }
+
+    let layouts = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::windows::list_layouts(&conn)?
+    };
+    for layout in layouts {
+        if Some(layout.id) == exclude_layout_id {
+            continue;
+        }
+        if let Some(hotkey) = &layout.hotkey {
+            if crate::core::hotkey::same(combo, hotkey) {
+                return Ok(HotkeyValidation {
+                    valid: false,
+                    conflict: Some(format!("já usado pelo layout '{}'", layout.name)),
+                });
+            }
+        }
+    }
+
+    // Conflito com o sistema/outro app: só é conflito se não for um atalho nosso.
+    if !crate::core::hotkey::is_registered(app, combo)
+        && crate::core::hotkey::test_register(app, combo).is_err()
+    {
+        return Ok(HotkeyValidation {
+            valid: false,
+            conflict: Some("em uso pelo sistema ou outro aplicativo".into()),
+        });
+    }
+
+    Ok(HotkeyValidation {
+        valid: true,
+        conflict: None,
+    })
+}
+
 /// Avalia uma expressão matemática simples para o resultado de calculadora.
 fn calculate(query: &str) -> Option<String> {
     if query.is_empty() {
@@ -161,6 +243,13 @@ pub fn apply_launcher_settings(
         return Err(AppError::Config("atalho vazio".into()));
     }
 
+    let check = validate_hotkey_inner(&app, state.inner(), &hotkey, None, true)?;
+    if !check.valid {
+        return Err(AppError::Config(
+            check.conflict.unwrap_or_else(|| "atalho inválido".into()),
+        ));
+    }
+
     let old_combo = state
         .config
         .lock()
@@ -201,6 +290,45 @@ pub fn apply_launcher_settings(
             "hotkeys": { "launcher": hotkey }
         }),
     )
+}
+
+#[tauri::command]
+pub fn validate_hotkey(
+    app: AppHandle,
+    state: State<AppState>,
+    combo: String,
+    exclude_layout_id: Option<i64>,
+    exclude_launcher: Option<bool>,
+) -> AppResult<HotkeyValidation> {
+    validate_hotkey_inner(
+        &app,
+        state.inner(),
+        &combo,
+        exclude_layout_id,
+        exclude_launcher.unwrap_or(false),
+    )
+}
+
+/// Suspende os atalhos globais enquanto o usuário grava uma nova combinação.
+#[tauri::command]
+pub fn suspend_hotkeys(app: AppHandle) -> AppResult<()> {
+    crate::core::hotkey::unregister_all(&app).map_err(AppError::Platform)?;
+    crate::core::win_hook::uninstall();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn resume_hotkeys(app: AppHandle, state: State<AppState>) -> AppResult<()> {
+    reload_shortcuts(&app, state.inner())?;
+    let replace = state
+        .config
+        .lock()
+        .map(|cfg| cfg.start_menu.mode == "replace")
+        .unwrap_or(false);
+    if replace {
+        let _ = crate::core::win_hook::install(app.clone());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -733,6 +861,14 @@ pub fn save_current_layout(
         ));
     }
     let hotkey = hotkey.filter(|value| !value.trim().is_empty());
+    if let Some(combo) = &hotkey {
+        let check = validate_hotkey_inner(&app, state.inner(), combo, None, false)?;
+        if !check.valid {
+            return Err(AppError::Config(
+                check.conflict.unwrap_or_else(|| "atalho inválido".into()),
+            ));
+        }
+    }
 
     let id = {
         let conn = state
@@ -781,6 +917,14 @@ pub fn set_window_layout_hotkey(
     hotkey: Option<String>,
 ) -> AppResult<()> {
     let hotkey = hotkey.filter(|value| !value.trim().is_empty());
+    if let Some(combo) = &hotkey {
+        let check = validate_hotkey_inner(&app, state.inner(), combo, Some(id), false)?;
+        if !check.valid {
+            return Err(AppError::Config(
+                check.conflict.unwrap_or_else(|| "atalho inválido".into()),
+            ));
+        }
+    }
     {
         let conn = state
             .db

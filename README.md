@@ -77,11 +77,17 @@ Abra **🪟** na barra superior.
 ### Layouts com hotkey
 
 1. Organize as janelas manualmente (ex.: navegador 25% à direita, Discord 75% à esquerda).
-2. Em **Layouts**, dê um nome e um atalho (ex.: `Win+Shift+F7`) e clique em **Salvar atual**.
-3. Pressione o atalho a qualquer momento para reaplicar o layout.
+2. Em **Layouts**, dê um nome. Para o atalho, **clique no campo e pressione a combinação**
+   (ex.: `Win+Shift+F7`) — o app entra em modo de escuta e grava o que você usou.
+3. Clique em **Salvar atual**.
+4. Pressione o atalho a qualquer momento para reaplicar o layout.
 
-O layout guarda, por janela, o processo e a posição relativa à **área útil do monitor**
-(excluindo a barra de tarefas), então funciona em diferentes resoluções e monitores.
+> Se a combinação já estiver em uso (pelo launcher, por outro layout ou pelo sistema),
+> o campo fica com **borda vermelha** e mostra o motivo. Basta gravar outra.
+
+O layout guarda o processo e a posição em **pixels exatos** (além das frações), então
+reaplica com precisão na mesma configuração de monitores e escala proporcionalmente se a
+resolução mudar. Layouts salvos antes desta versão devem ser **re-salvos uma vez**.
 
 ### Regras por app
 
@@ -179,8 +185,11 @@ examples/              # extensão de exemplo + índice de loja
 - [x] Hotkey por layout (dispatcher de atalhos)
 - [x] Regras por app (processo/título/classe, monitor, frações)
 - [x] Watcher que aplica regras a janelas novas
+- [x] **Captura de hotkey por gravação** (clique → pressione → salva)
+- [x] **Detecção de conflito** com borda vermelha (launcher, layouts, sistema)
+- [x] Layout com **pixels exatos** (reaplica sem deslocamento)
 - [x] Tela 🪟 Gerenciador de janelas
-- [x] Testes (hotkeys `Win+...`, DAO de layouts/regras, enumeração Win32)
+- [x] Testes (hotkeys `Win+...`, DAO de layouts/regras, enumeração Win32, precisão de pixels)
 
 ## Próximos passos
 

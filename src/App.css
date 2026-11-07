@@ -608,3 +608,56 @@ kbd {
 select.text-input {
   appearance: none;
 }
+
+/* ---------- captura de hotkey ---------- */
+.hotkey-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.inline > .hotkey-field {
+  flex: 1;
+}
+
+.hotkey-input {
+  padding: 10px 12px;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 13px;
+  color: #f5f5f7;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.hotkey-input:hover:not(:disabled) {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.hotkey-input.listening {
+  color: #c4b5fd;
+  border-color: rgba(139, 92, 246, 0.9);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+}
+
+.hotkey-input.conflict {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.hotkey-input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hotkey-error {
+  font-size: 11px;
+  color: #f87171;
+}

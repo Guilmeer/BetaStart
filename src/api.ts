@@ -4,6 +4,7 @@ import type {
   ApplyResult,
   ClipEntry,
   Config,
+  HotkeyValidation,
   InstalledExtension,
   MonitorInfo,
   PathsInfo,
@@ -30,6 +31,18 @@ export const api = {
   setOnboardingDone: () => invoke<Config>("set_onboarding_done"),
   applyLauncherSettings: (mode: "replace" | "off", hotkey: string) =>
     invoke<Config>("apply_launcher_settings", { mode, hotkey }),
+  validateHotkey: (
+    combo: string,
+    excludeLayoutId: number | null = null,
+    excludeLauncher = false,
+  ) =>
+    invoke<HotkeyValidation>("validate_hotkey", {
+      combo,
+      excludeLayoutId,
+      excludeLauncher,
+    }),
+  suspendHotkeys: () => invoke<void>("suspend_hotkeys"),
+  resumeHotkeys: () => invoke<void>("resume_hotkeys"),
 
   search: (query: string, limit = 12) =>
     invoke<SearchResults>("search", { query, limit }),
@@ -100,6 +113,7 @@ export type {
   ApplyResult,
   ClipEntry,
   Config,
+  HotkeyValidation,
   InstalledExtension,
   MonitorInfo,
   PathsInfo,

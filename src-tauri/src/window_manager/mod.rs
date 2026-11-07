@@ -17,6 +17,19 @@ pub struct LayoutSlot {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Pixels exatos relativos à área útil do monitor no momento da captura.
+    #[serde(default)]
+    pub x_px: Option<i64>,
+    #[serde(default)]
+    pub y_px: Option<i64>,
+    #[serde(default)]
+    pub w_px: Option<i64>,
+    #[serde(default)]
+    pub h_px: Option<i64>,
+    #[serde(default)]
+    pub work_width: Option<i64>,
+    #[serde(default)]
+    pub work_height: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,11 +111,36 @@ fn monitor_at(monitors: &[MonitorInfo], index: i32) -> Option<&MonitorInfo> {
 }
 
 fn target_rect(monitor: &MonitorInfo, x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
-    let left = monitor.work_x + (x * monitor.work_width as f64) as i64;
-    let top = monitor.work_y + (y * monitor.work_height as f64) as i64;
-    let width = (w * monitor.work_width as f64).max(50.0) as i64;
-    let height = (h * monitor.work_height as f64).max(50.0) as i64;
+    let left = monitor.work_x + (x * monitor.work_width as f64).round() as i64;
+    let top = monitor.work_y + (y * monitor.work_height as f64).round() as i64;
+    let width = (w * monitor.work_width as f64).round().max(50.0) as i64;
+    let height = (h * monitor.work_height as f64).round().max(50.0) as i64;
     (left as i32, top as i32, width as i32, height as i32)
+}
+
+/// Prefere os pixels exatos salvos no layout; se a resolução mudou, escala
+/// proporcionalmente. Layouts antigos (sem pixels) caem nas frações.
+fn slot_target_rect(monitor: &MonitorInfo, slot: &LayoutSlot) -> (i32, i32, i32, i32) {
+    if let (Some(x), Some(y), Some(w), Some(h), Some(saved_w), Some(saved_h)) = (
+        slot.x_px,
+        slot.y_px,
+        slot.w_px,
+        slot.h_px,
+        slot.work_width,
+        slot.work_height,
+    ) {
+        if saved_w > 0 && saved_h > 0 && monitor.work_width > 0 && monitor.work_height > 0 {
+            let scale_x = monitor.work_width as f64 / saved_w as f64;
+            let scale_y = monitor.work_height as f64 / saved_h as f64;
+            return (
+                (monitor.work_x as f64 + x as f64 * scale_x).round() as i32,
+                (monitor.work_y as f64 + y as f64 * scale_y).round() as i32,
+                (w as f64 * scale_x).round().max(50.0) as i32,
+                (h as f64 * scale_y).round().max(50.0) as i32,
+            );
+        }
+    }
+    target_rect(monitor, slot.x, slot.y, slot.w, slot.h)
 }
 
 fn field_value<'a>(window: &'a WindowInfo, field: &str) -> &'a str {
@@ -171,6 +209,12 @@ pub fn capture_layout(monitors: &[MonitorInfo]) -> Vec<LayoutSlot> {
             y,
             w,
             h,
+            x_px: Some(window.rect.x - monitor.work_x),
+            y_px: Some(window.rect.y - monitor.work_y),
+            w_px: Some(window.rect.w),
+            h_px: Some(window.rect.h),
+            work_width: Some(monitor.work_width),
+            work_height: Some(monitor.work_height),
         });
     }
 
@@ -222,7 +266,7 @@ pub fn apply_layout(
             continue;
         };
 
-        let (left, top, width, height) = target_rect(monitor, slot.x, slot.y, slot.w, slot.h);
+        let (left, top, width, height) = slot_target_rect(monitor, slot);
         if crate::platform::windows::move_window_rect(window.handle, left, top, width, height)
             .is_ok()
         {
@@ -280,4 +324,59 @@ pub fn apply_layout_by_id(conn: &rusqlite::Connection, id: i64) -> Result<ApplyR
     let monitors = list_monitors();
     let windows = snapshot_windows(&monitors);
     Ok(apply_layout(&layout, &windows, &monitors))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn monitor(work_width: i64, work_height: i64) -> MonitorInfo {
+        MonitorInfo {
+            index: 0,
+            name: "TEST".into(),
+            x: 0,
+            y: 0,
+            width: work_width,
+            height: work_height,
+            work_x: 0,
+            work_y: 0,
+            work_width,
+            work_height,
+            primary: true,
+        }
+    }
+
+    fn slot() -> LayoutSlot {
+        LayoutSlot {
+            app: Some("chrome.exe".into()),
+            match_field: "process".into(),
+            monitor: 0,
+            x: 0.75,
+            y: 0.0,
+            w: 0.25,
+            h: 1.0,
+            x_px: Some(1440),
+            y_px: Some(0),
+            w_px: Some(480),
+            h_px: Some(1040),
+            work_width: Some(1920),
+            work_height: Some(1040),
+        }
+    }
+
+    #[test]
+    fn pixel_slot_restores_exactly() {
+        assert_eq!(
+            slot_target_rect(&monitor(1920, 1040), &slot()),
+            (1440, 0, 480, 1040)
+        );
+    }
+
+    #[test]
+    fn pixel_slot_scales_on_resolution_change() {
+        assert_eq!(
+            slot_target_rect(&monitor(2560, 1400), &slot()),
+            (1920, 0, 640, 1400)
+        );
+    }
 }

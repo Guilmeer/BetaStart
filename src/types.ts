@@ -162,6 +162,11 @@ export interface ApplyResult {
   missed: string[];
 }
 
+export interface HotkeyValidation {
+  valid: boolean;
+  conflict: string | null;
+}
+
 export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface Config {

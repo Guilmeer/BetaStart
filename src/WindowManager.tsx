@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { HotkeyInput } from "./HotkeyInput";
 import type {
   MonitorInfo,
   WindowInfo,
@@ -152,11 +153,10 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
           value={layoutName}
           onChange={(event) => setLayoutName(event.target.value)}
         />
-        <input
-          className="text-input"
-          placeholder="Atalho (ex.: Win+Shift+F7)"
+        <HotkeyInput
           value={layoutHotkey}
-          onChange={(event) => setLayoutHotkey(event.target.value)}
+          onChange={(combo) => setLayoutHotkey(combo)}
+          placeholder="Atalho (ex.: Win+Shift+F7)"
         />
         <button className="primary" disabled={busy} onClick={() => void saveLayout()}>
           Salvar atual
@@ -196,6 +196,15 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
               </button>
             </div>
           </div>
+          <HotkeyInput
+            value={layout.hotkey ?? ""}
+            excludeLayoutId={layout.id}
+            placeholder="Sem atalho — clique para gravar"
+            onChange={async (combo) => {
+              await api.setWindowLayoutHotkey(layout.id, combo || null);
+              await refresh();
+            }}
+          />
         </div>
       ))}
 
