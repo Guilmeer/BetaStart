@@ -1,7 +1,10 @@
+mod clipboard_watcher;
 mod commands;
 mod core;
 mod db;
 mod error;
+mod indexer;
+mod models;
 mod platform;
 mod state;
 
@@ -33,15 +36,39 @@ pub fn run() {
             core::paths::ensure_workspace(&config.workspace.path)?;
 
             let conn = db::open(&db_path)?;
-            // Primeira indexação (silenciosa): falha não impede o app de abrir.
+            // Indexação de apps é rápida e roda de forma síncrona.
             let _ = db::apps::refresh(&conn);
 
-            let launcher_hotkey = config.hotkeys.launcher.clone();
-            app.manage(state::AppState::new(config, conn));
+            app.manage(state::AppState::new(config.clone(), conn));
 
             core::tray::setup(&handle)?;
-            if let Err(err) = core::hotkey::register(&handle, &launcher_hotkey) {
-                eprintln!("[betastart] falha ao registrar hotkey '{launcher_hotkey}': {err}");
+
+            if let Err(err) = core::hotkey::register(&handle, &config.hotkeys.launcher) {
+                eprintln!(
+                    "[betastart] falha ao registrar hotkey '{}': {err}",
+                    config.hotkeys.launcher
+                );
+            }
+
+            if config.start_menu.mode == "replace" {
+                if let Err(err) = core::win_hook::install(handle.clone()) {
+                    eprintln!("[betastart] falha ao instalar hook da tecla Win: {err}");
+                }
+            }
+
+            // Indexação de arquivos em segundo plano.
+            if config.search.include_files {
+                let dirs = config.search.index_dirs.clone();
+                let excludes = config.search.exclude_patterns.clone();
+                let index_db = db_path.clone();
+                std::thread::spawn(move || {
+                    indexer::run_file_index(index_db, dirs, excludes);
+                });
+            }
+
+            // Histórico de clipboard em segundo plano.
+            if config.clipboard.enabled {
+                clipboard_watcher::start(db_path.clone(), config.clipboard.max_entries);
             }
 
             Ok(())
@@ -52,11 +79,19 @@ pub fn run() {
             commands::get_paths,
             commands::set_config,
             commands::set_onboarding_done,
+            commands::apply_launcher_settings,
+            commands::search,
             commands::search_apps,
             commands::list_installed_apps,
             commands::launch_app,
+            commands::open_path,
+            commands::copy_text,
+            commands::list_clipboard,
+            commands::delete_clipboard,
+            commands::pin_clipboard,
             commands::list_open_windows,
             commands::rebuild_apps_index,
+            commands::rebuild_files_index,
             commands::get_status,
             commands::show_launcher,
             commands::hide_launcher,

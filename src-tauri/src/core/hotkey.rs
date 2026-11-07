@@ -11,3 +11,11 @@ pub fn register(app: &AppHandle, combo: &str) -> Result<(), String> {
         .register(shortcut)
         .map_err(|e| e.to_string())
 }
+
+/// Remove todos os atalhos e registra o novo (usado ao mudar configurações).
+pub fn reregister(app: &AppHandle, combo: &str) -> Result<(), String> {
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|e| e.to_string())?;
+    register(app, combo)
+}

@@ -63,22 +63,29 @@ src-tauri/src/
 src/                   # frontend React
 ```
 
-## Estado atual — Fase 0 (Fundação)
+## Estado atual — Fases 0 e 1 (Launcher MVP)
 
-- [x] Config persistente (`config.json`)
-- [x] Banco SQLite com schema completo e migrações
+**Fase 0 — Fundação**
+- [x] Config persistente (`config.json`) + migrações automáticas
+- [x] Banco SQLite com schema completo (v2) e migrações
 - [x] Índice de aplicativos do Menu Iniciar + busca
 - [x] Janela flutuante (arrastável, sem bordas, always-on-top)
 - [x] Bandeja do sistema com menu (Abrir / Reindexar / Sair)
 - [x] Fechar a janela → vai para a bandeja
 - [x] Hotkey global do launcher (Alt+Espaço por padrão)
 - [x] Enumeração de janelas abertas (Win32)
-- [x] Onboarding inicial (substituir Win vs Win+X)
-- [ ] Interceptação real da tecla Win (low-level hook) — próxima fase
-- [ ] Busca de arquivos e clipboard — próxima fase
-- [ ] Extensões (Deno), memória/tasks, grafo e MCP — fases seguintes
+
+**Fase 1 — Launcher MVP**
+- [x] Interceptação da tecla Win (low-level hook; modo "substituir")
+- [x] Busca de arquivos com indexação em background (Documents/Desktop/Downloads)
+- [x] Histórico de clipboard (watcher em background) + busca
+- [x] Calculadora inline (expressões matemáticas)
+- [x] Resultados unificados (apps, arquivos, clipboard, calculadora)
+- [x] Tela de Configurações: trocar atalho e modo da tecla Win a qualquer momento
+- [x] Onboarding revisado (Alt+Espaço vs substituir Win; aviso sobre Win+X)
+- [ ] Extensões (Deno), memória/tasks, grafo e MCP — próximas fases
 
 ## Próximos passos
 
-Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 1 (launcher completo), Fase 2 (extensões),
-Fase 3 (janelas), Fase 4 (memória + tasks), Fase 5 (grafo), Fase 6 (MCP), Fase 7 (distribuição).
+Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 2 (extensões), Fase 3 (janelas),
+Fase 4 (memória + tasks), Fase 5 (grafo), Fase 6 (MCP), Fase 7 (distribuição).

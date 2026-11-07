@@ -12,8 +12,17 @@ pub fn init(conn: &mut Connection) -> AppResult<()> {
         conn.execute_batch(SCHEMA_V1)?;
         conn.pragma_update(None, "user_version", 1)?;
     }
+    if version < 2 {
+        conn.execute_batch(MIGRATION_V2)?;
+        conn.pragma_update(None, "user_version", 2)?;
+    }
     Ok(())
 }
+
+const MIGRATION_V2: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_files_name ON files_index(name);
+CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_index(project);
+"#;
 
 const SCHEMA_V1: &str = r#"
 -- ============================================================

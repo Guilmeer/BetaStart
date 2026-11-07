@@ -23,9 +23,11 @@ serde_json = "1"
 thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5"
+arboard = "3"
+meval = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "shellapi", "minwindef", "windef"] }
+winapi = { version = "0.3", features = ["winuser", "shellapi", "minwindef", "windef", "libloaderapi"] }
 
 # See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

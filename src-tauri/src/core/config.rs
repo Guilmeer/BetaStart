@@ -26,6 +26,10 @@ fn default_http_port() -> u16 {
     19_000
 }
 
+fn default_clipboard_max() -> i64 {
+    500
+}
+
 fn default_launcher_hotkey() -> String {
     "Alt+Space".into()
 }
@@ -53,6 +57,21 @@ fn default_workspace_path() -> String {
     base.join("BetaStart").to_string_lossy().to_string()
 }
 
+/// Pastas indexadas por padrão quando o usuário não define nenhuma.
+pub fn default_index_dirs() -> Vec<String> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = dirs::document_dir() {
+        dirs.push(dir.to_string_lossy().to_string());
+    }
+    if let Some(dir) = dirs::desktop_dir() {
+        dirs.push(dir.to_string_lossy().to_string());
+    }
+    if let Some(dir) = dirs::download_dir() {
+        dirs.push(dir.to_string_lossy().to_string());
+    }
+    dirs
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -68,6 +87,8 @@ pub struct Config {
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub search: SearchConfig,
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
     #[serde(default)]
     pub tray: TrayConfig,
     #[serde(default)]
@@ -85,6 +106,7 @@ impl Default for Config {
             hotkeys: HotkeysConfig::default(),
             workspace: WorkspaceConfig::default(),
             search: SearchConfig::default(),
+            clipboard: ClipboardConfig::default(),
             tray: TrayConfig::default(),
             mcp: McpConfig::default(),
             appearance: AppearanceConfig::default(),
@@ -95,7 +117,7 @@ impl Default for Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartMenuConfig {
-    /// `ask` | `replace` | `win_x`
+    /// `ask` | `replace` | `off`
     #[serde(default = "default_start_menu_mode")]
     pub mode: String,
     #[serde(default = "default_start_menu_fallback")]
@@ -167,9 +189,27 @@ impl Default for SearchConfig {
         Self {
             include_apps: true,
             include_files: true,
-            index_dirs: Vec::new(),
+            index_dirs: default_index_dirs(),
             exclude_patterns: vec!["node_modules".into(), ".git".into()],
             max_results: default_max_results(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_clipboard_max")]
+    pub max_entries: i64,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_entries: default_clipboard_max(),
         }
     }
 }
@@ -267,13 +307,18 @@ impl Default for AppearanceConfig {
 
 impl Config {
     /// Carrega o `config.json` ou cria um com os padrões.
+    /// Também aplica migrações de valores antigos (ex.: modo `win_x`).
     pub fn load_or_default(path: &Path) -> AppResult<Self> {
         if path.exists() {
             let raw = std::fs::read_to_string(path)?;
-            let cfg: Config = serde_json::from_str(&raw)?;
+            let mut cfg: Config = serde_json::from_str(&raw)?;
+            if cfg.normalize() {
+                let _ = cfg.save(path);
+            }
             Ok(cfg)
         } else {
-            let cfg = Config::default();
+            let mut cfg = Config::default();
+            cfg.normalize();
             cfg.save(path)?;
             Ok(cfg)
         }
@@ -294,6 +339,29 @@ impl Config {
         deep_merge(&mut base, patch);
         let cfg: Config = serde_json::from_value(base)?;
         Ok(cfg)
+    }
+
+    /// Corrige valores obsoletos/ausentes. Retorna `true` se algo mudou.
+    pub fn normalize(&mut self) -> bool {
+        let mut changed = false;
+
+        // `win_x` foi descontinuado: Win+X é reservado pelo Windows.
+        if self.start_menu.mode == "win_x" {
+            self.start_menu.mode = "off".into();
+            changed = true;
+        }
+        // Se o onboarding já foi concluído e o modo ainda é "ask", assume "off".
+        if self.start_menu.mode == "ask" && self.onboarding_done {
+            self.start_menu.mode = "off".into();
+            changed = true;
+        }
+        // Config antiga sem pastas de índice: preenche com os padrões.
+        if self.search.include_files && self.search.index_dirs.is_empty() {
+            self.search.index_dirs = default_index_dirs();
+            changed = true;
+        }
+
+        changed
     }
 }
 

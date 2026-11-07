@@ -2,9 +2,12 @@
 //! A memória do usuário NÃO fica aqui: ela é composta por arquivos Markdown no workspace.
 
 pub mod apps;
+pub mod clipboard;
+pub mod files;
 pub mod schema;
 
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::Connection;
 
@@ -16,6 +19,8 @@ pub fn open(path: &Path) -> AppResult<Connection> {
         std::fs::create_dir_all(parent)?;
     }
     let mut conn = Connection::open(path)?;
+    // Vários consumidores (UI, indexador, clipboard) compartilham o mesmo arquivo.
+    conn.busy_timeout(Duration::from_secs(5))?;
     schema::init(&mut conn)?;
     Ok(conn)
 }
@@ -24,6 +29,6 @@ pub fn open(path: &Path) -> AppResult<Connection> {
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
 }

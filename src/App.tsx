@@ -1,19 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api } from "./api";
-import type { AppEntry, Config, StatusInfo } from "./types";
+import type { Config, SearchResults, StatusInfo } from "./types";
 
-type Screen = "search" | "onboarding";
+type Screen = "search" | "onboarding" | "settings";
+
+type Row =
+  | { kind: "calculator"; key: string; title: string; subtitle: string; value: string }
+  | { kind: "app"; key: string; title: string; subtitle: string; path: string }
+  | { kind: "file"; key: string; title: string; subtitle: string; path: string }
+  | { kind: "clipboard"; key: string; title: string; subtitle: string; text: string };
+
+function badgeLabel(kind: Row["kind"]): string {
+  switch (kind) {
+    case "app":
+      return "A";
+    case "file":
+      return "F";
+    case "clipboard":
+      return "C";
+    case "calculator":
+      return "=";
+  }
+}
 
 function App() {
   const [screen, setScreen] = useState<Screen>("search");
   const [, setConfig] = useState<Config | null>(null);
   const [status, setStatus] = useState<StatusInfo | null>(null);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<AppEntry[]>([]);
+  const [results, setResults] = useState<SearchResults | null>(null);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  const [mode, setMode] = useState<"off" | "replace">("off");
+  const [hotkey, setHotkey] = useState("Alt+Space");
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
+  const settingsInputRef = useRef<HTMLInputElement>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -23,10 +49,16 @@ function App() {
     }
   }, []);
 
+  const applyConfig = useCallback((cfg: Config) => {
+    setConfig(cfg);
+    setMode(cfg.startMenu.mode === "replace" ? "replace" : "off");
+    setHotkey(cfg.hotkeys.launcher);
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const [cfg, st] = await Promise.all([api.getConfig(), api.getStatus()]);
-      setConfig(cfg);
+      applyConfig(cfg);
       setStatus(st);
       setScreen(cfg.onboardingDone ? "search" : "onboarding");
     } catch (error) {
@@ -34,31 +66,35 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyConfig]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Foca a busca sempre que a tela de busca aparece ou a janela ganha foco.
+  // Foco conforme a tela.
   useEffect(() => {
     if (screen === "search") {
       inputRef.current?.focus();
+    } else if (screen === "settings") {
+      settingsInputRef.current?.focus();
     }
   }, [screen]);
 
   useEffect(() => {
-    const onFocus = () => inputRef.current?.focus();
+    const onFocus = () => {
+      if (screen === "search") inputRef.current?.focus();
+    };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, []);
+  }, [screen]);
 
   // Busca com debounce curto.
   useEffect(() => {
     if (screen !== "search") return;
     const timer = window.setTimeout(() => {
       api
-        .searchApps(query, 8)
+        .search(query, 12)
         .then((res) => {
           setResults(res);
           setSelected(0);
@@ -68,54 +104,139 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [query, screen]);
 
-  const launch = useCallback(
-    async (app: AppEntry) => {
+  // Resultados achatados (calculadora → apps → arquivos → clipboard).
+  const rows = useMemo<Row[]>(() => {
+    if (!results) return [];
+    const out: Row[] = [];
+
+    if (results.calculation) {
+      out.push({
+        kind: "calculator",
+        key: "calc",
+        title: results.calculation,
+        subtitle: "Copiar resultado",
+        value: results.calculation,
+      });
+    }
+    for (const app of results.apps) {
+      out.push({
+        kind: "app",
+        key: `app:${app.exePath}`,
+        title: app.name,
+        subtitle: app.exePath,
+        path: app.exePath,
+      });
+    }
+    for (const file of results.files) {
+      out.push({
+        kind: "file",
+        key: `file:${file.path}`,
+        title: file.name,
+        subtitle: file.path,
+        path: file.path,
+      });
+    }
+    for (const clip of results.clipboard) {
+      const text = (clip.text ?? "").replace(/\s+/g, " ").trim();
+      out.push({
+        kind: "clipboard",
+        key: `clip:${clip.id}`,
+        title: text.length > 90 ? `${text.slice(0, 90)}…` : text || "(vazio)",
+        subtitle: "Área de transferência",
+        text: clip.text ?? "",
+      });
+    }
+    return out;
+  }, [results]);
+
+  const activate = useCallback(
+    async (row: Row) => {
       try {
-        await api.launchApp(app.exePath);
+        if (row.kind === "app") {
+          await api.launchApp(row.path);
+        } else if (row.kind === "file") {
+          await api.openPath(row.path);
+        } else if (row.kind === "calculator") {
+          await api.copyText(row.value);
+        } else {
+          await api.copyText(row.text);
+        }
         await api.hideLauncher();
         await refreshStatus();
       } catch (error) {
-        console.error("Falha ao abrir app:", error);
+        console.error("Falha ao executar item:", error);
       }
     },
     [refreshStatus],
   );
 
-  const chooseStartMenu = useCallback(
-    async (mode: "replace" | "win_x") => {
-      try {
-        const cfg = await api.setConfig({ startMenu: { mode } });
-        const done = await api.setOnboardingDone();
-        setConfig({ ...cfg, onboardingDone: done.onboardingDone });
-        setScreen("search");
-      } catch (error) {
-        console.error("Falha ao salvar preferência:", error);
-      }
-    },
-    [],
-  );
-
-  // Atalhos globais de teclado.
+  // Atalhos de teclado globais.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (screen === "settings") {
+        if (event.key === "Escape") setScreen("search");
+        return;
+      }
+      if (screen !== "search") return;
+
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setSelected((current) =>
-          Math.min(current + 1, Math.max(results.length - 1, 0)),
+          Math.min(current + 1, Math.max(rows.length - 1, 0)),
         );
       } else if (event.key === "ArrowUp") {
         event.preventDefault();
         setSelected((current) => Math.max(current - 1, 0));
       } else if (event.key === "Enter") {
-        const app = results[selected];
-        if (app) void launch(app);
+        const row = rows[selected];
+        if (row) void activate(row);
       } else if (event.key === "Escape") {
         void api.hideLauncher();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [results, selected, launch]);
+  }, [screen, rows, selected, activate]);
+
+  const saveSettings = useCallback(async () => {
+    setSettingsBusy(true);
+    setSettingsMsg(null);
+    try {
+      const cfg = await api.applyLauncherSettings(mode, hotkey.trim());
+      applyConfig(cfg);
+      setScreen("search");
+    } catch (error) {
+      setSettingsMsg(String(error));
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [mode, hotkey, applyConfig]);
+
+  const chooseOnboarding = useCallback(
+    async (next: "replace" | "off") => {
+      try {
+        const cfg = await api.applyLauncherSettings(
+          next,
+          hotkey || "Alt+Space",
+        );
+        const done = await api.setOnboardingDone();
+        applyConfig({ ...cfg, onboardingDone: done.onboardingDone });
+        setScreen("search");
+      } catch (error) {
+        console.error("Falha ao salvar preferência:", error);
+      }
+    },
+    [hotkey, applyConfig],
+  );
+
+  const reindexFiles = useCallback(async () => {
+    try {
+      await api.rebuildFilesIndex();
+      setSettingsMsg("Reindexação iniciada em segundo plano.");
+    } catch (error) {
+      setSettingsMsg(String(error));
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -133,49 +254,141 @@ function App() {
           <span className="brand-name">Beta Start</span>
           <span className="version">v{status?.version ?? "0.1.0"}</span>
         </div>
-        <div className="status">
-          {status
-            ? `${status.appsIndexed} apps · ${status.openWindows} janelas`
-            : "carregando…"}
+        <div className="topbar-right">
+          <span className="status">
+            {status
+              ? `${status.appsIndexed} apps · ${status.filesIndexed} arq · ${status.clipboardCount} clips`
+              : "carregando…"}
+          </span>
+          <button
+            className="icon-btn"
+            title="Configurações"
+            onClick={() =>
+              setScreen(screen === "settings" ? "search" : "settings")
+            }
+          >
+            ⚙
+          </button>
         </div>
       </header>
 
-      {screen === "onboarding" ? (
+      {screen === "onboarding" && (
         <section className="onboarding">
           <h1>Como você quer abrir o Beta Start?</h1>
-          <p>Você pode mudar isso depois nas configurações.</p>
+          <p>Você pode mudar isso depois no ícone ⚙.</p>
           <div className="choices">
             <button
               className="choice"
-              onClick={() => void chooseStartMenu("replace")}
+              onClick={() => void chooseOnboarding("off")}
             >
-              <strong>Substituir a tecla Win</strong>
+              <strong>Usar Alt + Espaço (recomendado)</strong>
               <span>
-                A tecla Windows abre o Beta Start. Win+Shift abre o Menu Iniciar
-                original.
+                Não mexe na tecla Windows. Abre/fecha o Beta Start com
+                Alt+Espaço.
               </span>
             </button>
             <button
               className="choice"
-              onClick={() => void chooseStartMenu("win_x")}
+              onClick={() => void chooseOnboarding("replace")}
             >
-              <strong>Usar Win+X</strong>
+              <strong>Substituir a tecla Windows</strong>
               <span>
-                A tecla Windows continua nativa; Win+X abre o Beta Start.
+                A tecla Win sozinha abre o Beta Start. Combos como Win+E
+                continuam funcionando.
               </span>
             </button>
           </div>
           <p className="hint">
-            Dica: por enquanto use <kbd>Alt</kbd>+<kbd>Espaço</kbd> para
-            abrir/fechar.
+            Obs.: Win+X é reservado pelo Windows (menu de energia), por isso não
+            usamos.
           </p>
         </section>
-      ) : (
+      )}
+
+      {screen === "settings" && (
+        <section className="settings">
+          <h1>Configurações</h1>
+
+          <label className="field">
+            <span className="field-label">Atalho do launcher</span>
+            <input
+              ref={settingsInputRef}
+              className="text-input"
+              value={hotkey}
+              onChange={(event) => setHotkey(event.target.value)}
+              placeholder="Ex.: Alt+Space"
+              spellCheck={false}
+            />
+            <span className="field-hint">
+              Aceita combinações como Ctrl+Shift+Space. Padrão: Alt+Space.
+            </span>
+          </label>
+
+          <div className="field">
+            <span className="field-label">Tecla Windows</span>
+            <div className="radio-row">
+              <button
+                className={`radio ${mode === "off" ? "active" : ""}`}
+                onClick={() => setMode("off")}
+              >
+                Não substituir (recomendado)
+              </button>
+              <button
+                className={`radio ${mode === "replace" ? "active" : ""}`}
+                onClick={() => setMode("replace")}
+              >
+                Substituir a tecla Win
+              </button>
+            </div>
+            <span className="field-hint">
+              Win+X é usado pelo próprio Windows; por isso o padrão é Alt+Space.
+            </span>
+            <span className="field-hint">
+              Hook da tecla Win:{" "}
+              {status?.winHookActive ? "ativo" : "inativo"}
+            </span>
+          </div>
+
+          <div className="settings-actions">
+            <button
+              className="primary"
+              onClick={() => void saveSettings()}
+              disabled={settingsBusy}
+            >
+              {settingsBusy ? "Salvando…" : "Salvar"}
+            </button>
+            <button className="secondary" onClick={() => void reindexFiles()}>
+              Reindexar arquivos
+            </button>
+          </div>
+
+          {settingsMsg && <p className="settings-msg">{settingsMsg}</p>}
+
+          {status && (
+            <div className="paths">
+              <div>
+                <span>Workspace</span>
+                <code>{status.paths.workspace}</code>
+              </div>
+              <div>
+                <span>Banco</span>
+                <code>{status.paths.db}</code>
+              </div>
+              <div>
+                <span>Config</span>
+                <code>{status.paths.config}</code>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {screen === "search" && (
         <>
           <input
             ref={inputRef}
             className="search"
-            placeholder="Buscar aplicativos, arquivos e comandos…"
+            placeholder="Buscar apps, arquivos, clipboard ou calcular…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             spellCheck={false}
@@ -183,22 +396,22 @@ function App() {
           />
 
           <ul className="results">
-            {results.length === 0 && (
+            {rows.length === 0 && (
               <li className="empty">Nenhum resultado.</li>
             )}
-            {results.map((app, index) => (
+            {rows.map((row, index) => (
               <li
-                key={`${app.exePath}-${index}`}
+                key={row.key}
                 className={`result ${index === selected ? "selected" : ""}`}
                 onMouseEnter={() => setSelected(index)}
-                onClick={() => void launch(app)}
+                onClick={() => void activate(row)}
               >
-                <span className="app-icon">
-                  {app.name.charAt(0).toUpperCase()}
+                <span className={`app-icon badge-${row.kind}`}>
+                  {badgeLabel(row.kind)}
                 </span>
                 <span className="app-text">
-                  <span className="app-name">{app.name}</span>
-                  <span className="app-path">{app.exePath}</span>
+                  <span className="app-name">{row.title}</span>
+                  <span className="app-path">{row.subtitle}</span>
                 </span>
               </li>
             ))}

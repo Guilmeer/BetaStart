@@ -21,6 +21,37 @@ export interface WindowInfo {
   rect: Rect;
 }
 
+export interface FileEntry {
+  path: string;
+  name: string;
+  ext: string | null;
+  isDir: boolean;
+}
+
+export interface ClipEntry {
+  id: number;
+  kind: string;
+  text: string | null;
+  copiedAt: number;
+  pinned: boolean;
+}
+
+export interface CommandEntry {
+  extId: string;
+  commandId: string;
+  title: string;
+  subtitle: string | null;
+  icon: string | null;
+}
+
+export interface SearchResults {
+  apps: AppEntry[];
+  files: FileEntry[];
+  clipboard: ClipEntry[];
+  commands: CommandEntry[];
+  calculation: string | null;
+}
+
 export interface PathsInfo {
   config: string;
   db: string;
@@ -30,11 +61,14 @@ export interface PathsInfo {
 export interface StatusInfo {
   version: string;
   appsIndexed: number;
+  filesIndexed: number;
+  clipboardCount: number;
   openWindows: number;
+  winHookActive: boolean;
   paths: PathsInfo;
 }
 
-export type StartMenuMode = "ask" | "replace" | "win_x";
+export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface Config {
   version: number;
@@ -49,6 +83,7 @@ export interface Config {
     excludePatterns: string[];
     maxResults: number;
   };
+  clipboard: { enabled: boolean; maxEntries: number };
   tray: { showOnClose: boolean; startOnBoot: boolean; hideOnBlur: boolean };
   mcp: {
     enabled: boolean;
