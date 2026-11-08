@@ -1,5 +1,6 @@
 //! Comandos Tauri do ambiente de memória + tasks.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use tauri::State;
@@ -9,7 +10,7 @@ use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::memory::{self, Frontmatter};
 use crate::models::{
-    Graph, MemoryFile, MemoryHit, NewTask, NoteDetail, ProjectInfo, Task, TaskPatch,
+    Graph, LinkInfo, MemoryFile, MemoryHit, NewTask, NoteDetail, ProjectInfo, Task, TaskPatch,
 };
 use crate::state::AppState;
 
@@ -31,6 +32,44 @@ fn reindex_with_state(state: &AppState) -> AppResult<usize> {
         .lock()
         .map_err(|_| AppError::Database("db lock envenenado".into()))?;
     memory::reindex(&conn, &workspace)
+}
+
+/// Resolve rótulos `[[...]]` para o arquivo correspondente (título ou stem).
+fn resolve_links(state: &AppState, links: &[String]) -> AppResult<Vec<LinkInfo>> {
+    if links.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    let mut stmt = conn.prepare("SELECT file_path, title FROM memory_index")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut index: HashMap<String, String> = HashMap::new();
+    for row in rows {
+        let (path, title) = row?;
+        index
+            .entry(title.trim().to_lowercase())
+            .or_insert(path.clone());
+        if let Some(stem) = Path::new(&path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_lowercase())
+        {
+            index.entry(stem).or_insert(path);
+        }
+    }
+
+    Ok(links
+        .iter()
+        .map(|label| LinkInfo {
+            label: label.clone(),
+            path: index.get(&label.trim().to_lowercase()).cloned(),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -170,12 +209,19 @@ pub fn read_note(state: State<AppState>, path: String) -> AppResult<NoteDetail> 
         }
     });
 
+    let mut link_labels = frontmatter.links.clone();
+    link_labels.extend(memory::extract_wiki_links(&body));
+    link_labels.sort();
+    link_labels.dedup();
+    let links = resolve_links(state.inner(), &link_labels)?;
+
     Ok(NoteDetail {
         path,
         kind,
         id,
         title,
         tags: frontmatter.tags,
+        links,
         body,
         project,
         status: frontmatter.status,

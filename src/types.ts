@@ -185,12 +185,18 @@ export interface MemoryHit {
   snippet: string;
 }
 
+export interface LinkInfo {
+  label: string;
+  path: string | null;
+}
+
 export interface NoteDetail {
   path: string;
   kind: string;
   id: string | null;
   title: string;
   tags: string[];
+  links: LinkInfo[];
   body: string;
   project: string | null;
   status: string | null;

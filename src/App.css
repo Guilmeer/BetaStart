@@ -860,6 +860,33 @@ select.text-input {
   border-radius: 999px;
 }
 
+.note-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.link-chip {
+  padding: 2px 8px;
+  font-size: 10px;
+  color: #67e8f9;
+  cursor: pointer;
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+}
+
+.link-chip:hover {
+  background: rgba(34, 211, 238, 0.2);
+}
+
+.link-chip.unresolved {
+  color: #fca5a5;
+  cursor: default;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
 .task-fields {
   display: flex;
   flex-wrap: wrap;

@@ -162,6 +162,10 @@ pub fn build_graph(conn: &Connection, project: Option<&str>) -> AppResult<Graph>
     for item in &items {
         for link in &item.links {
             let key = link.trim().to_lowercase();
+            if key.is_empty() {
+                continue;
+            }
+
             if let Some(target) = title_index.get(&key) {
                 if target != &item.file_path {
                     let edge_key = format!("{}->{target}:link", item.file_path);
@@ -172,6 +176,26 @@ pub fn build_graph(conn: &Connection, project: Option<&str>) -> AppResult<Graph>
                             kind: "link".into(),
                         });
                     }
+                }
+            } else {
+                // Destino inexistente: mostra um nó fantasma para o usuário perceber.
+                let missing_id = format!("missing:{key}");
+                if seen_nodes.insert(missing_id.clone()) {
+                    nodes.push(GraphNode {
+                        id: missing_id.clone(),
+                        kind: "missing".into(),
+                        label: link.clone(),
+                        project: None,
+                        path: None,
+                    });
+                }
+                let edge_key = format!("{}->{missing_id}:link", item.file_path);
+                if seen_edges.insert(edge_key) {
+                    edges.push(GraphEdge {
+                        source: item.file_path.clone(),
+                        target: missing_id,
+                        kind: "link".into(),
+                    });
                 }
             }
         }
@@ -203,7 +227,7 @@ mod tests {
                     title: "Alpha".into(),
                     project: "p".into(),
                     tags: vec!["x".into()],
-                    links: vec!["Beta".into()],
+                    links: vec!["Beta".into(), "Nope".into()],
                     content: String::new(),
                     updated_at: 0,
                 },
@@ -280,6 +304,7 @@ mod tests {
         assert!(graph.edges.iter().any(|edge| edge.kind == "tag"));
         assert!(graph.edges.iter().any(|edge| edge.kind == "parent"));
         assert!(graph.edges.iter().any(|edge| edge.kind == "link"));
+        assert!(graph.nodes.iter().any(|node| node.kind == "missing"));
 
         let _ = std::fs::remove_file(&db_path);
     }

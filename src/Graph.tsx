@@ -25,6 +25,7 @@ const COLORS: Record<string, string> = {
   note: "#3b82f6",
   task: "#ec4899",
   tag: "#f59e0b",
+  missing: "#ef4444",
 };
 
 export function Graph({
@@ -140,8 +141,15 @@ export function Graph({
             }}
           >
             <circle
-              r={node.kind === "project" ? 9 : node.kind === "tag" ? 5 : 7}
+              r={
+                node.kind === "project"
+                  ? 9
+                  : node.kind === "tag" || node.kind === "missing"
+                    ? 5
+                    : 7
+              }
               fill={COLORS[node.kind] ?? "#94a3b8"}
+              stroke={node.kind === "missing" ? "#fecaca" : undefined}
             />
             <text x={10} y={3} fontSize={9} fill="#c9c9d4">
               {node.label}
@@ -161,6 +169,9 @@ export function Graph({
         </span>
         <span>
           <i style={{ background: COLORS.tag }} /> tag
+        </span>
+        <span>
+          <i style={{ background: COLORS.missing }} /> não resolvido
         </span>
         <span className="field-hint">
           {data.nodes.length} nós · {data.edges.length} arestas

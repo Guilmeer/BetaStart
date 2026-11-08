@@ -151,12 +151,21 @@ pub struct MemoryHit {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LinkInfo {
+    pub label: String,
+    /// Caminho do alvo, ou `None` se o destino não foi encontrado.
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NoteDetail {
     pub path: String,
     pub kind: String,
     pub id: Option<String>,
     pub title: String,
     pub tags: Vec<String>,
+    pub links: Vec<LinkInfo>,
     pub body: String,
     pub project: Option<String>,
     pub status: Option<String>,

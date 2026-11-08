@@ -54,6 +54,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
   const [searchHits, setSearchHits] = useState<MemoryHit[] | null>(null);
   const [view, setView] = useState<"list" | "kanban">("list");
   const [rightPanel, setRightPanel] = useState<"tasks" | "graph">("tasks");
+  const [graphVersion, setGraphVersion] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,6 +77,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
       setProjects(projs);
       setFiles(fs);
       setTasks(ts);
+      setGraphVersion((value) => value + 1);
     } catch (error) {
       setMessage(String(error));
     }
@@ -462,6 +464,27 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 {note.id && <span className="kind-badge">#{note.id.slice(0, 8)}</span>}
               </div>
 
+              {note.links.length > 0 && (
+                <div className="note-links">
+                  {note.links.map((link) => (
+                    <button
+                      key={link.label}
+                      className={`link-chip ${link.path ? "" : "unresolved"}`}
+                      title={
+                        link.path
+                          ? `Abrir ${link.label}`
+                          : `Destino "${link.label}" não encontrado`
+                      }
+                      onClick={() => {
+                        if (link.path) void openFile(link.path);
+                      }}
+                    >
+                      [[{link.label}]]
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {note.kind === "task" && (
                 <div className="task-fields">
                   <select
@@ -521,7 +544,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 className="note-body"
                 value={note.body}
                 onChange={(event) => updateNote({ body: event.target.value })}
-                placeholder="Escreva aqui…"
+                placeholder="Escreva aqui… use [[Nome da nota]] para criar links"
               />
             </>
           ) : (
@@ -565,7 +588,11 @@ export function Memory({ onBack }: { onBack: () => void }) {
           </div>
 
           {rightPanel === "graph" ? (
-            <Graph project={projectFilter} onOpen={(path) => void openFile(path)} />
+            <Graph
+              key={graphVersion}
+              project={projectFilter}
+              onOpen={(path) => void openFile(path)}
+            />
           ) : (
             <>
           <div className="task-form">

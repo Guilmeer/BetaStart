@@ -115,6 +115,10 @@ force-directed (`d3-force`) mostra projetos, notas, tasks e tags, com arestas de
 - **parent** — task pai → subtask;
 - **link** — `[[Outra nota]]` encontrado no corpo.
 
+No editor, os links aparecem como **chips**: ciano quando o destino existe e **vermelho**
+quando não existe. Destinos não encontrados também aparecem como **nós vermelhos** no grafo.
+O grafo é atualizado após salvar/criar/excluir.
+
 Clique em um nó que tenha arquivo para abri-lo. O filtro de projeto também filtra o grafo.
 
 ## Gerenciador de janelas
