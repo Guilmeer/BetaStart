@@ -270,6 +270,7 @@ CREATE TABLE IF NOT EXISTS memory_index (
   title      TEXT,
   project    TEXT,                          -- slug ou NULL (memória principal)
   tags       TEXT,                          -- JSON array
+  content    TEXT,                          -- corpo da nota (busca)
   updated_at INTEGER
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(title, content, tags, content='memory_index', content_rowid='id');
@@ -281,6 +282,7 @@ CREATE TABLE IF NOT EXISTS tasks_index (
   status     TEXT NOT NULL DEFAULT 'todo',
   priority   TEXT NOT NULL DEFAULT 'medium',
   due        INTEGER,
+  remind     INTEGER,
   tags       TEXT,                          -- JSON array
   project    TEXT,
   parent_id  TEXT,
@@ -325,6 +327,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   notified_at INTEGER,
   enabled     INTEGER NOT NULL DEFAULT 1
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_task ON reminders(task_id);
 
 CREATE TABLE IF NOT EXISTS graph_cache (
   workspace_hash TEXT PRIMARY KEY,

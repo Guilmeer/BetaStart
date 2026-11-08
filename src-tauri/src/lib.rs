@@ -5,8 +5,11 @@ mod db;
 mod error;
 mod extensions;
 mod indexer;
+mod memory;
+mod memory_api;
 mod models;
 mod platform;
+mod reminder_watcher;
 mod state;
 mod window_manager;
 mod window_watcher;
@@ -61,6 +64,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -109,6 +113,19 @@ pub fn run() {
                 window_watcher::start(db_path.clone());
             }
 
+            // Indexação do workspace de memória + lembretes.
+            let workspace_path = core::paths::expand(&config.workspace.path);
+            {
+                let workspace_db = db_path.clone();
+                let workspace_dir = workspace_path.clone();
+                std::thread::spawn(move || {
+                    if let Ok(conn) = db::open(&workspace_db) {
+                        let _ = memory::reindex(&conn, &workspace_dir);
+                    }
+                });
+            }
+            reminder_watcher::start(handle.clone(), db_path.clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -153,6 +170,19 @@ pub fn run() {
             commands::upsert_window_rule,
             commands::delete_window_rule,
             commands::apply_window_rules,
+            memory_api::reindex_memory,
+            memory_api::list_projects,
+            memory_api::create_project,
+            memory_api::list_memory_files,
+            memory_api::read_note,
+            memory_api::save_note,
+            memory_api::create_note,
+            memory_api::delete_memory_file,
+            memory_api::search_memory,
+            memory_api::list_tasks,
+            memory_api::create_task,
+            memory_api::update_task,
+            memory_api::delete_task,
             commands::get_status,
             commands::show_launcher,
             commands::hide_launcher,

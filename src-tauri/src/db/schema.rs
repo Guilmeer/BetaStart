@@ -16,8 +16,18 @@ pub fn init(conn: &mut Connection) -> AppResult<()> {
         conn.execute_batch(MIGRATION_V2)?;
         conn.pragma_update(None, "user_version", 2)?;
     }
+    if version < 3 {
+        conn.execute_batch(MIGRATION_V3)?;
+        conn.pragma_update(None, "user_version", 3)?;
+    }
     Ok(())
 }
+
+const MIGRATION_V3: &str = r#"
+ALTER TABLE memory_index ADD COLUMN content TEXT;
+ALTER TABLE tasks_index ADD COLUMN remind INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_task ON reminders(task_id);
+"#;
 
 const MIGRATION_V2: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_files_name ON files_index(name);

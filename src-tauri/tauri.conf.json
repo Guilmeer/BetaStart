@@ -19,7 +19,7 @@
         "minWidth": 560,
         "minHeight": 320,
         "center": true,
-        "resizable": false,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

@@ -43,6 +43,7 @@ npm run tauri build
 - **Alt + Espaço** abre/fecha o launcher.
 - Digite para buscar **apps**, **arquivos**, **clipboard**, comandos de extensões e
   **calculadora** (ex.: `12*8+3`).
+- **🧠 Memória & Tasks**: notas, projetos, busca, tasks com subtasks, lista/kanban e lembretes.
 - **🪟 Gerenciador de janelas**: salvar/aplicar layouts, regras por app e multi-monitor.
 - **⚙ Configurações**: trocar o atalho e o modo da tecla Win a qualquer momento.
 - **🧩 Extensões**: instalar/gerenciar extensões e o runtime Deno.
@@ -69,6 +70,40 @@ Exemplo pronto em [`examples/hello-extension`](./examples/hello-extension).
 
 Também é possível instalar via **URL Git** ou pela **Loja** (um `index.json`, remoto ou
 local — veja [`examples/store/index.json`](./examples/store/index.json)).
+
+## Memória & Tasks
+
+Abra **🧠** na barra superior (a janela aumenta automaticamente).
+
+- A **memória principal** fica em `global/`; cada projeto em `projects/<slug>/`.
+- Tudo é **Markdown real** com frontmatter YAML — você pode abrir/editar fora do app e
+  versionar com Git.
+- No app você pode:
+  - criar **projetos**, **notas** e **tasks**;
+  - editar título, tags e corpo;
+  - buscar por **palavra-chave** dentro do projeto (ou em tudo);
+  - alternar tasks entre **Lista** e **Kanban**;
+  - criar **subtasks** (tarefa pai);
+  - definir **vencimento** e **lembrete** (notificação do Windows).
+- O índice é atualizado ao abrir a tela, ao salvar e no boot. O botão **Atualizar**
+  reindexa manualmente.
+
+Formato de uma task:
+
+```md
+---
+type: task
+id: "uuid"
+title: "Minha tarefa"
+status: todo            # todo | in_progress | done | blocked | cancelled
+priority: high          # high | medium | low
+due: "2026-12-01T10:00"
+remind: "2026-12-01T09:30"
+tags: [trabalho, urgente]
+parent: "id-da-task-pai"  # opcional (subtask)
+---
+Corpo/descrição…
+```
 
 ## Gerenciador de janelas
 
@@ -132,29 +167,38 @@ src-tauri/src/
 │   └── win_hook.rs    # hook da tecla Win (low-level)
 ├── db/
 │   ├── mod.rs         # abertura + migrações
-│   ├── schema.rs      # schema SQL (v2)
+│   ├── schema.rs      # schema SQL (v3)
 │   ├── apps.rs        # índice/busca de apps
 │   ├── files.rs       # índice/busca de arquivos
 │   ├── clipboard.rs   # histórico de clipboard
-│   └── extensions.rs  # registro/comandos/permissões de extensões
+│   ├── extensions.rs  # registro/comandos/permissões de extensões
+│   ├── windows.rs     # layouts/regras de janelas
+│   ├── memory.rs      # índice/busca de memória
+│   └── tasks.rs       # índice de tasks + lembretes
 ├── indexer/           # indexação de arquivos em background
 ├── clipboard_watcher.rs # captura de clipboard em background
+├── memory/
+│   └── mod.rs         # frontmatter YAML, scan/indexação do workspace
+├── memory_api.rs      # comandos de memória + tasks
+├── reminder_watcher.rs # notificações de lembretes
+├── window_manager/    # layouts, regras, multi-monitor
+├── window_watcher.rs  # aplica regras a janelas novas
 ├── extensions/
 │   ├── mod.rs         # manifesto, instalação (pasta/Git), validação
 │   └── runtime.rs     # Deno sidecar, runner, permissões, execução
 └── platform/
     ├── mod.rs         # tipos + launch (Windows/Linux)
     ├── apps.rs        # varredura do Menu Iniciar (.lnk)
-    └── windows.rs     # enumeração de janelas (Win32)
-src/                   # frontend React (launcher, settings, extensions)
+    └── windows.rs     # enumeração de janelas + monitores (Win32)
+src/                   # frontend React (launcher, settings, extensões, janelas, memória)
 examples/              # extensão de exemplo + índice de loja
 ```
 
-## Estado atual — Fases 0, 1 e 2
+## Estado atual — Fases 0 a 4
 
 **Fase 0 — Fundação**
 - [x] Config persistente + migrações automáticas
-- [x] Banco SQLite com schema completo (v2)
+- [x] Banco SQLite com schema completo (v3)
 - [x] Índice de apps do Menu Iniciar + busca
 - [x] Janela flutuante, bandeja, fechar→bandeja
 - [x] Hotkey global (Alt+Espaço)
@@ -191,7 +235,18 @@ examples/              # extensão de exemplo + índice de loja
 - [x] Tela 🪟 Gerenciador de janelas
 - [x] Testes (hotkeys `Win+...`, DAO de layouts/regras, enumeração Win32, precisão de pixels)
 
+**Fase 4 — Memória + Tasks**
+- [x] Workspace de arquivos Markdown com frontmatter YAML
+- [x] Projetos (`projects/<slug>/`) + memória principal (`global/`)
+- [x] Indexação em SQLite (`memory_index` + `tasks_index`) e busca por escopo
+- [x] CRUD de notas e tasks direto nos arquivos
+- [x] Tasks com status, prioridade, due, tags, **subtasks** e lembretes
+- [x] Visualização **lista** e **kanban**
+- [x] Notificações de lembrete (plugin de notificação)
+- [x] Tela 🧠 Memória & Tasks (redimensiona a janela)
+- [x] Testes de frontmatter + indexação end-to-end
+
 ## Próximos passos
 
-Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 4 (memória + tasks), Fase 5 (grafo),
-Fase 6 (MCP), Fase 7 (distribuição).
+Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 5 (grafo force-directed), Fase 6 (MCP),
+Fase 7 (distribuição).

@@ -661,3 +661,424 @@ select.text-input {
   font-size: 11px;
   color: #f87171;
 }
+
+/* ---------- memória & tasks ---------- */
+.memory {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px 16px 16px;
+  overflow: hidden;
+}
+
+.mem-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mem-header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.mem-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.mem-toolbar .text-input {
+  flex: 1;
+}
+
+.mem-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 220px minmax(0, 1fr) 330px;
+  gap: 10px;
+  min-height: 0;
+}
+
+.mem-sidebar,
+.mem-editor,
+.mem-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+
+.mem-sidebar {
+  overflow-y: auto;
+}
+
+.mem-sidebar h2,
+.mem-tasks h2 {
+  margin: 4px 0;
+  font-size: 12px;
+  color: #c9c9d4;
+}
+
+.mem-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mem-projects button,
+.mem-file {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #c9c9d4;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+}
+
+.mem-projects button:hover,
+.mem-file:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mem-projects button.active,
+.mem-file.active {
+  color: #fff;
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.mem-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.mem-group {
+  margin: 8px 0 2px;
+  font-size: 10px;
+  color: #77777f;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mem-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mem-file-text strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-file-text small {
+  font-size: 10px;
+  color: #77777f;
+}
+
+.kind {
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+}
+
+.kind-task {
+  background: rgba(236, 72, 153, 0.25);
+}
+
+.kind-note {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.kind-project {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+.mem-editor {
+  padding: 12px;
+}
+
+.mem-editor-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.note-title {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f5f5f7;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  outline: none;
+}
+
+.note-title:focus {
+  border-color: rgba(139, 92, 246, 0.6);
+}
+
+.mem-editor-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kind-badge {
+  padding: 2px 6px;
+  font-size: 10px;
+  color: #b9b9c4;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+
+.task-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-fields .text-input {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.note-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #e7e7ea;
+  resize: none;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  outline: none;
+}
+
+.note-body:focus {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.mem-empty {
+  margin: auto;
+  font-size: 13px;
+  color: #77777f;
+}
+
+.mem-tasks {
+  overflow-y: auto;
+}
+
+.mem-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.segmented button {
+  padding: 4px 8px;
+  font-size: 10px;
+  color: #b9b9c4;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+
+.segmented button.active {
+  color: #fff;
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.6);
+}
+
+.task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.task-form .text-input {
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+.task-form .inline .text-input {
+  flex: 1;
+}
+
+.task-list,
+.kanban {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-group-title {
+  margin: 6px 0 2px;
+  font-size: 10px;
+  color: #77777f;
+  text-transform: uppercase;
+}
+
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.task-card.done {
+  opacity: 0.55;
+}
+
+.task-card-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.task-card-head strong {
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.prio {
+  padding: 1px 6px;
+  font-size: 9px;
+  border-radius: 999px;
+}
+
+.prio-high {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.prio-medium {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.prio-low {
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10px;
+  color: #8a8a95;
+}
+
+.tag {
+  padding: 1px 6px;
+  color: #b9b9c4;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.task-actions button {
+  padding: 3px 6px;
+  font-size: 9px;
+  color: #b9b9c4;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+
+.task-actions button.active {
+  color: #fff;
+  background: rgba(139, 92, 246, 0.3);
+  border-color: rgba(139, 92, 246, 0.6);
+}
+
+.subtask {
+  padding-left: 6px;
+  margin-left: 14px;
+  border-left: 2px solid rgba(139, 92, 246, 0.25);
+}
+
+.kanban {
+  flex-direction: row;
+  gap: 6px;
+}
+
+.kanban-col {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.kanban-title {
+  font-size: 10px;
+  color: #8a8a95;
+  text-transform: uppercase;
+}
+
+.kanban-card {
+  padding: 6px 8px;
+}
+
+.kanban-card strong {
+  font-size: 11px;
+  cursor: pointer;
+}

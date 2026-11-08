@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import "./App.css";
 import { api } from "./api";
 import { Extensions } from "./Extensions";
 import { HotkeyInput } from "./HotkeyInput";
+import { Memory } from "./Memory";
 import { WindowManager } from "./WindowManager";
 import type { Config, SearchResults, StatusInfo } from "./types";
 
-type Screen = "search" | "onboarding" | "settings" | "extensions" | "windows";
+type Screen =
+  | "search"
+  | "onboarding"
+  | "settings"
+  | "extensions"
+  | "windows"
+  | "memory";
 
 type Row =
   | { kind: "calculator"; key: string; title: string; subtitle: string; value: string }
@@ -89,6 +97,17 @@ function App() {
     if (screen === "search") {
       inputRef.current?.focus();
     }
+  }, [screen]);
+
+  // A tela de memória precisa de mais espaço.
+  useEffect(() => {
+    const window = getCurrentWindow();
+    const width = screen === "memory" ? 1120 : 760;
+    const height = screen === "memory" ? 740 : 460;
+    void window
+      .setSize(new LogicalSize(width, height))
+      .then(() => window.center())
+      .catch(() => {});
   }, [screen]);
 
   useEffect(() => {
@@ -305,6 +324,15 @@ function App() {
           </span>
           <button
             className="icon-btn"
+            title="Memória & Tasks"
+            onClick={() =>
+              setScreen(screen === "memory" ? "search" : "memory")
+            }
+          >
+            🧠
+          </button>
+          <button
+            className="icon-btn"
             title="Gerenciador de janelas"
             onClick={() =>
               setScreen(screen === "windows" ? "search" : "windows")
@@ -448,6 +476,10 @@ function App() {
 
       {screen === "windows" && (
         <WindowManager onBack={() => setScreen("search")} />
+      )}
+
+      {screen === "memory" && (
+        <Memory onBack={() => setScreen("search")} />
       )}
 
       {screen === "search" && (

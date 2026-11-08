@@ -6,13 +6,20 @@ import type {
   Config,
   HotkeyValidation,
   InstalledExtension,
+  MemoryFile,
+  MemoryHit,
   MonitorInfo,
+  NewTask,
+  NoteDetail,
   PathsInfo,
+  ProjectInfo,
   RunResult,
   RuntimeStatus,
   SearchResults,
   StatusInfo,
   StoreItem,
+  Task,
+  TaskPatch,
   WindowInfo,
   WindowLayout,
   WindowRule,
@@ -83,6 +90,36 @@ export const api = {
   listStore: (url: string | null = null) =>
     invoke<StoreItem[]>("list_store", { url }),
 
+  reindexMemory: () => invoke<number>("reindex_memory"),
+  listProjects: () => invoke<ProjectInfo[]>("list_projects"),
+  createProject: (slug: string, title: string) =>
+    invoke<ProjectInfo>("create_project", { slug, title }),
+  listMemoryFiles: (project: string | null) =>
+    invoke<MemoryFile[]>("list_memory_files", { project }),
+  readNote: (path: string) => invoke<NoteDetail>("read_note", { path }),
+  saveNote: (path: string, title: string, tags: string[], body: string) =>
+    invoke<NoteDetail>("save_note", { path, title, tags, body }),
+  createNote: (project: string | null, title: string) =>
+    invoke<NoteDetail>("create_note", { project, title }),
+  deleteMemoryFile: (path: string) =>
+    invoke<void>("delete_memory_file", { path }),
+  searchMemory: (
+    project: string | null,
+    query: string,
+    tags: string[] = [],
+    limit = 50,
+  ) =>
+    invoke<MemoryHit[]>("search_memory", { project, query, tags, limit }),
+  listTasks: (
+    project: string | null,
+    status: string | null = null,
+    query: string | null = null,
+  ) => invoke<Task[]>("list_tasks", { project, status, query }),
+  createTask: (input: NewTask) => invoke<Task>("create_task", { input }),
+  updateTask: (id: string, patch: TaskPatch) =>
+    invoke<Task>("update_task", { id, patch }),
+  deleteTask: (id: string) => invoke<void>("delete_task", { id }),
+
   listOpenWindows: () => invoke<WindowInfo[]>("list_open_windows"),
   listWindowsWithMonitor: () =>
     invoke<WindowInfo[]>("list_windows_with_monitor"),
@@ -115,13 +152,20 @@ export type {
   Config,
   HotkeyValidation,
   InstalledExtension,
+  MemoryFile,
+  MemoryHit,
   MonitorInfo,
+  NewTask,
+  NoteDetail,
   PathsInfo,
+  ProjectInfo,
   RunResult,
   RuntimeStatus,
   SearchResults,
   StatusInfo,
   StoreItem,
+  Task,
+  TaskPatch,
   WindowInfo,
   WindowLayout,
   WindowRule,

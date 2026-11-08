@@ -167,6 +167,83 @@ export interface HotkeyValidation {
   conflict: string | null;
 }
 
+export interface MemoryFile {
+  path: string;
+  name: string;
+  kind: string;
+  title: string;
+  project: string;
+  tags: string[];
+}
+
+export interface MemoryHit {
+  filePath: string;
+  kind: string;
+  title: string;
+  project: string;
+  tags: string[];
+  snippet: string;
+}
+
+export interface NoteDetail {
+  path: string;
+  kind: string;
+  id: string | null;
+  title: string;
+  tags: string[];
+  body: string;
+  project: string | null;
+  status: string | null;
+  priority: string | null;
+  due: string | null;
+  remind: string | null;
+  parent: string | null;
+}
+
+export interface ProjectInfo {
+  slug: string;
+  title: string;
+  description: string;
+  color: string | null;
+}
+
+export interface Task {
+  id: string;
+  filePath: string;
+  title: string;
+  status: string;
+  priority: string;
+  due: number | null;
+  dueIso: string | null;
+  remind: number | null;
+  remindIso: string | null;
+  tags: string[];
+  project: string;
+  parentId: string | null;
+}
+
+export interface NewTask {
+  title: string;
+  project?: string | null;
+  parent?: string | null;
+  due?: string | null;
+  remind?: string | null;
+  priority?: string;
+  tags?: string[];
+  body?: string;
+}
+
+export interface TaskPatch {
+  title?: string;
+  status?: string;
+  priority?: string;
+  due?: string;
+  remind?: string;
+  tags?: string[];
+  parent?: string;
+  body?: string;
+}
+
 export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface Config {
