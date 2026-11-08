@@ -11,17 +11,19 @@ pub fn replace_all(conn: &Connection, rows: &[MemoryRow]) -> AppResult<usize> {
     {
         let mut stmt = tx.prepare(
             "INSERT OR REPLACE INTO memory_index
-               (file_path, kind, title, project, tags, content, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+               (file_path, kind, title, project, tags, links, content, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for row in rows {
             let tags = serde_json::to_string(&row.tags)?;
+            let links = serde_json::to_string(&row.links)?;
             stmt.execute(params![
                 row.file_path,
                 row.kind,
                 row.title,
                 row.project,
                 tags,
+                links,
                 row.content,
                 row.updated_at
             ])?;

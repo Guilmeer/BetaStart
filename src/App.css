@@ -1082,3 +1082,66 @@ select.text-input {
   font-size: 11px;
   cursor: pointer;
 }
+
+/* ---------- grafo ---------- */
+.graph-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.graph-svg {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+.graph-node {
+  cursor: default;
+}
+
+.graph-node.clickable {
+  cursor: pointer;
+}
+
+.graph-node:hover circle {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 10px;
+  color: #8a8a95;
+}
+
+.graph-legend span {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.graph-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.graph-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 16px;
+  font-size: 12px;
+  color: #77777f;
+  text-align: center;
+}

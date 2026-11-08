@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { Graph } from "./Graph";
 import type {
   MemoryFile,
   MemoryHit,
@@ -52,6 +53,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
   const [search, setSearch] = useState("");
   const [searchHits, setSearchHits] = useState<MemoryHit[] | null>(null);
   const [view, setView] = useState<"list" | "kanban">("list");
+  const [rightPanel, setRightPanel] = useState<"tasks" | "graph">("tasks");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -376,13 +378,20 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 placeholder="Novo projeto"
                 value={newProject}
                 onChange={(event) => setNewProject(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void createProject();
+                  }
+                }}
               />
               <button
                 className="secondary"
                 disabled={busy || !newProject.trim()}
+                title="Criar projeto (Enter)"
                 onClick={() => void createProject()}
               >
-                +
+                Criar
               </button>
             </div>
           </div>
@@ -523,29 +532,54 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
         <aside className="mem-tasks">
           <div className="mem-tasks-head">
-            <h2>Tasks</h2>
             <div className="segmented">
               <button
-                className={view === "list" ? "active" : ""}
-                onClick={() => setView("list")}
+                className={rightPanel === "tasks" ? "active" : ""}
+                onClick={() => setRightPanel("tasks")}
               >
-                Lista
+                Tasks
               </button>
               <button
-                className={view === "kanban" ? "active" : ""}
-                onClick={() => setView("kanban")}
+                className={rightPanel === "graph" ? "active" : ""}
+                onClick={() => setRightPanel("graph")}
               >
-                Kanban
+                Grafo
               </button>
             </div>
+            {rightPanel === "tasks" && (
+              <div className="segmented">
+                <button
+                  className={view === "list" ? "active" : ""}
+                  onClick={() => setView("list")}
+                >
+                  Lista
+                </button>
+                <button
+                  className={view === "kanban" ? "active" : ""}
+                  onClick={() => setView("kanban")}
+                >
+                  Kanban
+                </button>
+              </div>
+            )}
           </div>
 
+          {rightPanel === "graph" ? (
+            <Graph project={projectFilter} onOpen={(path) => void openFile(path)} />
+          ) : (
+            <>
           <div className="task-form">
             <input
               className="text-input"
-              placeholder="Nova task…"
+              placeholder="Nova task… (Enter para criar)"
               value={taskTitle}
               onChange={(event) => setTaskTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void createTask();
+                }
+              }}
             />
             <div className="inline">
               <select
@@ -646,6 +680,8 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 </div>
               ))}
             </div>
+          )}
+            </>
           )}
         </aside>
       </div>

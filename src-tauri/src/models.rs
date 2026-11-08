@@ -107,6 +107,7 @@ pub struct MemoryRow {
     pub title: String,
     pub project: String,
     pub tags: Vec<String>,
+    pub links: Vec<String>,
     pub content: String,
     pub updated_at: i64,
 }
@@ -209,6 +210,31 @@ pub struct NewTask {
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphNode {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub project: Option<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Graph {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -8,7 +8,9 @@ use crate::core::paths;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::memory::{self, Frontmatter};
-use crate::models::{MemoryFile, MemoryHit, NewTask, NoteDetail, ProjectInfo, Task, TaskPatch};
+use crate::models::{
+    Graph, MemoryFile, MemoryHit, NewTask, NoteDetail, ProjectInfo, Task, TaskPatch,
+};
 use crate::state::AppState;
 
 fn workspace(state: &AppState) -> AppResult<PathBuf> {
@@ -287,6 +289,16 @@ pub fn search_memory(
         tags.as_deref().unwrap_or(&[]),
         limit.unwrap_or(50),
     )
+}
+
+#[tauri::command]
+pub fn get_graph(state: State<AppState>, project: Option<String>) -> AppResult<Graph> {
+    let project = project.filter(|value| value != "all");
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    crate::graph::build_graph(&conn, project.as_deref())
 }
 
 #[tauri::command]

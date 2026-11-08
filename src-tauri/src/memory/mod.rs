@@ -248,6 +248,27 @@ pub fn reindex(conn: &rusqlite::Connection, workspace: &Path) -> AppResult<usize
     Ok(memory_rows.len())
 }
 
+/// Extrai links no formato `[[destino]]` do corpo de uma nota.
+pub fn extract_wiki_links(body: &str) -> Vec<String> {
+    let mut links = Vec::new();
+    let mut rest = body;
+
+    while let Some(start) = rest.find("[[") {
+        let after = &rest[start + 2..];
+        if let Some(end) = after.find("]]") {
+            let link = after[..end].trim();
+            if !link.is_empty() {
+                links.push(link.to_string());
+            }
+            rest = &after[end + 2..];
+        } else {
+            break;
+        }
+    }
+
+    links
+}
+
 pub fn scan_workspace(workspace: &Path) -> AppResult<(Vec<MemoryRow>, Vec<TaskRow>)> {
     let mut memory = Vec::new();
     let mut tasks = Vec::new();
@@ -300,6 +321,10 @@ fn scan_dir(workspace: &Path, dir: &Path, memory: &mut Vec<MemoryRow>, tasks: &m
                 .unwrap_or_else(|| name.clone())
         });
         let tags = frontmatter.tags.clone();
+        let mut links = frontmatter.links.clone();
+        links.extend(extract_wiki_links(&parsed.body));
+        links.sort();
+        links.dedup();
         let updated_at = mtime(&path);
         let file_path = path.to_string_lossy().to_string();
 
@@ -309,6 +334,7 @@ fn scan_dir(workspace: &Path, dir: &Path, memory: &mut Vec<MemoryRow>, tasks: &m
             title: title.clone(),
             project: project.clone(),
             tags: tags.clone(),
+            links,
             content: parsed.body.chars().take(20_000).collect(),
             updated_at,
         });

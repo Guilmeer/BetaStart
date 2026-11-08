@@ -20,8 +20,16 @@ pub fn init(conn: &mut Connection) -> AppResult<()> {
         conn.execute_batch(MIGRATION_V3)?;
         conn.pragma_update(None, "user_version", 3)?;
     }
+    if version < 4 {
+        conn.execute_batch(MIGRATION_V4)?;
+        conn.pragma_update(None, "user_version", 4)?;
+    }
     Ok(())
 }
+
+const MIGRATION_V4: &str = r#"
+ALTER TABLE memory_index ADD COLUMN links TEXT;
+"#;
 
 const MIGRATION_V3: &str = r#"
 ALTER TABLE memory_index ADD COLUMN content TEXT;

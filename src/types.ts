@@ -244,6 +244,25 @@ export interface TaskPatch {
   body?: string;
 }
 
+export interface GraphNode {
+  id: string;
+  kind: string;
+  label: string;
+  project: string | null;
+  path: string | null;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+export interface Graph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
 export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface Config {

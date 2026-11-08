@@ -4,6 +4,7 @@ import type {
   ApplyResult,
   ClipEntry,
   Config,
+  Graph,
   HotkeyValidation,
   InstalledExtension,
   MemoryFile,
@@ -110,6 +111,8 @@ export const api = {
     limit = 50,
   ) =>
     invoke<MemoryHit[]>("search_memory", { project, query, tags, limit }),
+  getGraph: (project: string | null) =>
+    invoke<Graph>("get_graph", { project }),
   listTasks: (
     project: string | null,
     status: string | null = null,
@@ -150,6 +153,7 @@ export type {
   ApplyResult,
   ClipEntry,
   Config,
+  Graph,
   HotkeyValidation,
   InstalledExtension,
   MemoryFile,

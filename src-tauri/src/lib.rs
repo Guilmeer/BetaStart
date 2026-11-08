@@ -4,6 +4,7 @@ mod core;
 mod db;
 mod error;
 mod extensions;
+mod graph;
 mod indexer;
 mod memory;
 mod memory_api;
@@ -179,6 +180,7 @@ pub fn run() {
             memory_api::create_note,
             memory_api::delete_memory_file,
             memory_api::search_memory,
+            memory_api::get_graph,
             memory_api::list_tasks,
             memory_api::create_task,
             memory_api::update_task,

@@ -270,6 +270,7 @@ CREATE TABLE IF NOT EXISTS memory_index (
   title      TEXT,
   project    TEXT,                          -- slug ou NULL (memória principal)
   tags       TEXT,                          -- JSON array
+  links      TEXT,                          -- JSON array (frontmatter + [[wiki-links]])
   content    TEXT,                          -- corpo da nota (busca)
   updated_at INTEGER
 );

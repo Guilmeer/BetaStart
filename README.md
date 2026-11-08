@@ -105,6 +105,18 @@ parent: "id-da-task-pai"  # opcional (subtask)
 Corpo/descrição…
 ```
 
+### Grafo
+
+No painel direito da tela de memória, alterne entre **Tasks** e **Grafo**. O grafo
+force-directed (`d3-force`) mostra projetos, notas, tasks e tags, com arestas de:
+
+- **projeto** — projeto → item;
+- **tag** — tag → item;
+- **parent** — task pai → subtask;
+- **link** — `[[Outra nota]]` encontrado no corpo.
+
+Clique em um nó que tenha arquivo para abri-lo. O filtro de projeto também filtra o grafo.
+
 ## Gerenciador de janelas
 
 Abra **🪟** na barra superior.
@@ -167,7 +179,7 @@ src-tauri/src/
 │   └── win_hook.rs    # hook da tecla Win (low-level)
 ├── db/
 │   ├── mod.rs         # abertura + migrações
-│   ├── schema.rs      # schema SQL (v3)
+│   ├── schema.rs      # schema SQL (v4)
 │   ├── apps.rs        # índice/busca de apps
 │   ├── files.rs       # índice/busca de arquivos
 │   ├── clipboard.rs   # histórico de clipboard
@@ -178,8 +190,10 @@ src-tauri/src/
 ├── indexer/           # indexação de arquivos em background
 ├── clipboard_watcher.rs # captura de clipboard em background
 ├── memory/
-│   └── mod.rs         # frontmatter YAML, scan/indexação do workspace
-├── memory_api.rs      # comandos de memória + tasks
+│   └── mod.rs         # frontmatter YAML, links wiki, scan/indexação
+├── graph/
+│   └── mod.rs         # grafo de projetos/notas/tasks/tags/links
+├── memory_api.rs      # comandos de memória + tasks + grafo
 ├── reminder_watcher.rs # notificações de lembretes
 ├── window_manager/    # layouts, regras, multi-monitor
 ├── window_watcher.rs  # aplica regras a janelas novas
@@ -194,11 +208,11 @@ src/                   # frontend React (launcher, settings, extensões, janelas
 examples/              # extensão de exemplo + índice de loja
 ```
 
-## Estado atual — Fases 0 a 4
+## Estado atual — Fases 0 a 5
 
 **Fase 0 — Fundação**
 - [x] Config persistente + migrações automáticas
-- [x] Banco SQLite com schema completo (v3)
+- [x] Banco SQLite com schema completo (v4)
 - [x] Índice de apps do Menu Iniciar + busca
 - [x] Janela flutuante, bandeja, fechar→bandeja
 - [x] Hotkey global (Alt+Espaço)
@@ -246,7 +260,14 @@ examples/              # extensão de exemplo + índice de loja
 - [x] Tela 🧠 Memória & Tasks (redimensiona a janela)
 - [x] Testes de frontmatter + indexação end-to-end
 
+**Fase 5 — Grafo**
+- [x] Índice de links wiki (`[[...]]`) por nota
+- [x] Grafo de projetos, notas, tasks e tags (migration v4)
+- [x] Arestas de projeto, tag, parent e link
+- [x] Visualização force-directed (`d3-force`) no painel lateral
+- [x] Clique em um nó abre o arquivo correspondente
+- [x] Teste do builder do grafo
+
 ## Próximos passos
 
-Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 5 (grafo force-directed), Fase 6 (MCP),
-Fase 7 (distribuição).
+Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 6 (MCP), Fase 7 (distribuição).
