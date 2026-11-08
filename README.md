@@ -43,6 +43,7 @@ npm run tauri build
 - **Alt + Espaço** abre/fecha o launcher.
 - Digite para buscar **apps**, **arquivos**, **clipboard**, comandos de extensões e
   **calculadora** (ex.: `12*8+3`).
+- **🔌 MCP**: servidor para IAs (stdio + HTTP/SSE) com tokens e escopos.
 - **🧠 Memória & Tasks**: notas, projetos, busca, tasks com subtasks, lista/kanban e lembretes.
 - **🪟 Gerenciador de janelas**: salvar/aplicar layouts, regras por app e multi-monitor.
 - **⚙ Configurações**: trocar o atalho e o modo da tecla Win a qualquer momento.
@@ -164,6 +165,48 @@ do monitor. Janelas maximizadas são restauradas antes de serem reposicionadas.
 - Comandos retornam ações seguras: `{ type: "message" }`, `{ type: "copy" }` ou
   `{ type: "open" }` (com checagem de permissão no host).
 
+## MCP
+
+Abra **🔌** na barra superior.
+
+1. Crie um cliente, escolha os **escopos** e clique em **Gerar token**.
+2. Copie o token (exibido **uma única vez**) e o snippet de configuração.
+3. Revogue clientes a qualquer momento.
+
+### stdio (Claude Desktop, Cursor, etc.)
+
+```json
+{
+  "mcpServers": {
+    "betastart": {
+      "command": "C:\\caminho\\para\\betastart.exe",
+      "args": ["mcp", "--token", "bst_..."]
+    }
+  }
+}
+```
+
+### HTTP/SSE local
+
+- SSE: `http://127.0.0.1:19000/sse?token=<token>`
+- POST JSON-RPC: `http://127.0.0.1:19000/mcp`
+- Health: `GET /health`
+- O servidor sobe junto com o app quando `mcp.http.enabled` está ligado.
+
+### Tools
+
+`memory.list`, `memory.read`, `memory.write`, `memory.search`, `project.list`,
+`project.create`, `graph.get`, `tasks.list`, `tasks.create`, `tasks.update`,
+`tasks.delete`, `windows.list`, `windows.move_resize`, `windows.apply_layout`,
+`windows.save_layout`, `extensions.list`, `extensions.run`, `search.query`,
+`clipboard.list`, `settings.get`, `settings.set`.
+
+### CLI
+
+```bash
+betastart mcp-token "Nome do cliente"   # cria cliente com todos os escopos e imprime o token
+```
+
 ## Estrutura do repositório
 
 ```
@@ -197,7 +240,13 @@ src-tauri/src/
 │   └── mod.rs         # frontmatter YAML, links wiki, scan/indexação
 ├── graph/
 │   └── mod.rs         # grafo de projetos/notas/tasks/tags/links
+├── mcp/
+│   ├── mod.rs         # contexto, JSON-RPC, stdio
+│   ├── tools.rs       # definições e implementação das tools
+│   ├── http.rs        # HTTP/SSE local (axum)
+│   └── auth.rs        # tokens Argon2
 ├── memory_api.rs      # comandos de memória + tasks + grafo
+├── mcp_api.rs         # comandos de tokens/clientes MCP
 ├── reminder_watcher.rs # notificações de lembretes
 ├── window_manager/    # layouts, regras, multi-monitor
 ├── window_watcher.rs  # aplica regras a janelas novas
@@ -212,7 +261,7 @@ src/                   # frontend React (launcher, settings, extensões, janelas
 examples/              # extensão de exemplo + índice de loja
 ```
 
-## Estado atual — Fases 0 a 5
+## Estado atual — Fases 0 a 6
 
 **Fase 0 — Fundação**
 - [x] Config persistente + migrações automáticas
@@ -272,6 +321,15 @@ examples/              # extensão de exemplo + índice de loja
 - [x] Clique em um nó abre o arquivo correspondente
 - [x] Teste do builder do grafo
 
+**Fase 6 — MCP**
+- [x] Servidor MCP (JSON-RPC) com 21 tools
+- [x] Transporte **stdio** (`betastart mcp --token ...`)
+- [x] Transporte **HTTP/SSE** local (`/sse`, `/messages`, `/mcp`, `/health`)
+- [x] Tokens com hash Argon2 + escopos por cliente
+- [x] Tela 🔌 MCP (criar/revogar tokens, escopos, snippet)
+- [x] CLI `betastart mcp-token "Nome"`
+- [x] Testes de initialize/tools/escopos/auth
+
 ## Próximos passos
 
-Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 6 (MCP), Fase 7 (distribuição).
+Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 7 (distribuição — instalador + auto-update).

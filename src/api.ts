@@ -7,6 +7,9 @@ import type {
   Graph,
   HotkeyValidation,
   InstalledExtension,
+  McpClient,
+  McpClientCreated,
+  McpStatus,
   MemoryFile,
   MemoryHit,
   MonitorInfo,
@@ -113,6 +116,14 @@ export const api = {
     invoke<MemoryHit[]>("search_memory", { project, query, tags, limit }),
   getGraph: (project: string | null) =>
     invoke<Graph>("get_graph", { project }),
+
+  mcpStatus: () => invoke<McpStatus>("mcp_status"),
+  mcpCreateClient: (name: string, scopes: string[]) =>
+    invoke<McpClientCreated>("mcp_create_client", { name, scopes }),
+  mcpListClients: () => invoke<McpClient[]>("mcp_list_clients"),
+  mcpRevokeClient: (id: number) =>
+    invoke<void>("mcp_revoke_client", { id }),
+  mcpExePath: () => invoke<string>("mcp_exe_path"),
   listTasks: (
     project: string | null,
     status: string | null = null,
@@ -156,6 +167,9 @@ export type {
   Graph,
   HotkeyValidation,
   InstalledExtension,
+  McpClient,
+  McpClientCreated,
+  McpStatus,
   MemoryFile,
   MemoryHit,
   MonitorInfo,

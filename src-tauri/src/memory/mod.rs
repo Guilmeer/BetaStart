@@ -212,6 +212,13 @@ pub fn note_kind(frontmatter: &Frontmatter, path: &Path) -> String {
 }
 
 pub fn ensure_inside(workspace: &Path, path: &Path) -> AppResult<()> {
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(AppError::Platform("caminho com '..' não permitido".into()));
+    }
+
     let root = workspace
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf());

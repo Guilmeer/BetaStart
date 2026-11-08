@@ -241,6 +241,24 @@ pub struct GraphEdge {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpClient {
+    pub id: i64,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub created_at: i64,
+    pub last_seen: Option<i64>,
+    pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpClientCreated {
+    pub token: String,
+    pub client: McpClient,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Graph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,

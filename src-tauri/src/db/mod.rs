@@ -5,6 +5,7 @@ pub mod apps;
 pub mod clipboard;
 pub mod extensions;
 pub mod files;
+pub mod mcp;
 pub mod memory;
 pub mod schema;
 pub mod tasks;

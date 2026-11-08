@@ -6,6 +6,8 @@ mod error;
 mod extensions;
 mod graph;
 mod indexer;
+mod mcp;
+mod mcp_api;
 mod memory;
 mod memory_api;
 mod models;
@@ -17,6 +19,16 @@ mod window_watcher;
 
 use tauri::Manager;
 use tauri_plugin_global_shortcut::ShortcutState;
+
+/// Entrada headless para clientes MCP via stdio (`betastart mcp --token ...`).
+pub fn run_mcp_stdio() {
+    mcp::run_stdio();
+}
+
+/// CLI headless para criar um cliente MCP com todos os escopos.
+pub fn run_mcp_token() {
+    mcp::run_token_cli();
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -127,6 +139,12 @@ pub fn run() {
             }
             reminder_watcher::start(handle.clone(), db_path.clone());
 
+            // Servidor MCP HTTP/SSE local.
+            if config.mcp.enabled && config.mcp.http.enabled {
+                let app_data = core::paths::app_data_dir(&handle)?;
+                mcp::start_http(app_data, config.mcp.http.host.clone(), config.mcp.http.port);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -185,6 +203,11 @@ pub fn run() {
             memory_api::create_task,
             memory_api::update_task,
             memory_api::delete_task,
+            mcp_api::mcp_status,
+            mcp_api::mcp_create_client,
+            mcp_api::mcp_list_clients,
+            mcp_api::mcp_revoke_client,
+            mcp_api::mcp_exe_path,
             commands::get_status,
             commands::show_launcher,
             commands::hide_launcher,

@@ -317,6 +317,21 @@ pub fn apply_rules(rules: &[WindowRule], monitors: &[MonitorInfo]) -> ApplyResul
     ApplyResult { moved, missed }
 }
 
+/// Move/redimensiona uma janela usando frações da área útil do monitor.
+pub fn move_window(
+    handle: u64,
+    monitor: i32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    let monitors = list_monitors();
+    let monitor = monitor_at(&monitors, monitor).ok_or_else(|| "monitor inválido".to_string())?;
+    let (left, top, width, height) = target_rect(monitor, x, y, w, h);
+    crate::platform::windows::move_window_rect(handle, left, top, width, height)
+}
+
 pub fn apply_layout_by_id(conn: &rusqlite::Connection, id: i64) -> Result<ApplyResult, String> {
     let layout = crate::db::windows::get_layout(conn, id)
         .map_err(|e| e.to_string())?

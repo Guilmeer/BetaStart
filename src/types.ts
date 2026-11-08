@@ -269,6 +269,29 @@ export interface Graph {
   edges: GraphEdge[];
 }
 
+export interface McpStatus {
+  enabled: boolean;
+  httpEnabled: boolean;
+  host: string;
+  port: number;
+  running: boolean;
+  clients: number;
+}
+
+export interface McpClient {
+  id: number;
+  name: string;
+  scopes: string[];
+  createdAt: number;
+  lastSeen: number | null;
+  revoked: boolean;
+}
+
+export interface McpClientCreated {
+  token: string;
+  client: McpClient;
+}
+
 export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface Config {

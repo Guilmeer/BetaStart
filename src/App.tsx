@@ -4,6 +4,7 @@ import "./App.css";
 import { api } from "./api";
 import { Extensions } from "./Extensions";
 import { HotkeyInput } from "./HotkeyInput";
+import { Mcp } from "./Mcp";
 import { Memory } from "./Memory";
 import { WindowManager } from "./WindowManager";
 import type { Config, SearchResults, StatusInfo } from "./types";
@@ -14,7 +15,8 @@ type Screen =
   | "settings"
   | "extensions"
   | "windows"
-  | "memory";
+  | "memory"
+  | "mcp";
 
 type Row =
   | { kind: "calculator"; key: string; title: string; subtitle: string; value: string }
@@ -102,8 +104,8 @@ function App() {
   // A tela de memória precisa de mais espaço.
   useEffect(() => {
     const window = getCurrentWindow();
-    const width = screen === "memory" ? 1120 : 760;
-    const height = screen === "memory" ? 740 : 460;
+    const width = screen === "memory" ? 1120 : screen === "mcp" ? 900 : 760;
+    const height = screen === "memory" ? 740 : screen === "mcp" ? 680 : 460;
     void window
       .setSize(new LogicalSize(width, height))
       .then(() => window.center())
@@ -324,6 +326,13 @@ function App() {
           </span>
           <button
             className="icon-btn"
+            title="MCP"
+            onClick={() => setScreen(screen === "mcp" ? "search" : "mcp")}
+          >
+            🔌
+          </button>
+          <button
+            className="icon-btn"
             title="Memória & Tasks"
             onClick={() =>
               setScreen(screen === "memory" ? "search" : "memory")
@@ -481,6 +490,8 @@ function App() {
       {screen === "memory" && (
         <Memory onBack={() => setScreen("search")} />
       )}
+
+      {screen === "mcp" && <Mcp onBack={() => setScreen("search")} />}
 
       {screen === "search" && (
         <>

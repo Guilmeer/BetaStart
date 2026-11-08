@@ -576,7 +576,10 @@ Permissões negadas viram erro de runtime para a extensão (nunca bloqueiam sile
 - **stdio**: o cliente MCP (Claude Desktop, Cursor, etc.) lança `betastart mcp` como subprocesso.
   O protocolo MCP JSON-RPC roda sobre stdin/stdout.
 - **HTTP/SSE**: servidor HTTP local em `127.0.0.1:<porta>` (default 19000), expondo
-  `/sse` (stream) e `/messages` (POST). Útil para múltiplos clientes e futuro acesso remoto.
+  `/sse` (stream), `/messages` (POST do transporte SSE), `/mcp` (POST JSON-RPC) e
+  `/health`. Útil para múltiplos clientes e futuro acesso remoto.
+- **CLI**: `betastart mcp --token <token>` inicia o stdio; `betastart mcp-token "Nome"`
+  cria um cliente com todos os escopos e imprime o token (uso headless).
 
 ### 8.2 Autenticação
 
@@ -598,6 +601,7 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
 | `memory.search` | memory | `{ query, project? }` | hits (path, título, trecho) |
 | `project.list` | memory | — | projetos |
 | `project.create` | memory | `{ slug, title }` | projeto |
+| `graph.get` | memory | `{ project? }` | nós/arestas do grafo |
 | `tasks.list` | tasks | `{ project?, status?, priority? }` | tasks |
 | `tasks.create` | tasks | `{ title, project?, parent?, due?, priority?, tags? }` | task |
 | `tasks.update` | tasks | `{ id, patch }` | task |
