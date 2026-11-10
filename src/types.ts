@@ -211,6 +211,9 @@ export interface ProjectInfo {
   title: string;
   description: string;
   color: string | null;
+  rootPath: string | null;
+  mode: string;
+  available: boolean;
 }
 
 export interface Task {
@@ -294,12 +297,22 @@ export interface McpClientCreated {
 
 export type StartMenuMode = "ask" | "replace" | "off";
 
+export interface LinkedProjectConfig {
+  slug: string;
+  root: string;
+  title?: string | null;
+}
+
 export interface Config {
   version: number;
   onboardingDone: boolean;
   startMenu: { mode: StartMenuMode; fallback: string };
   hotkeys: { launcher: string; windowLayouts: Record<string, string> };
-  workspace: { path: string; activeProject: string | null };
+  workspace: {
+    path: string;
+    activeProject: string | null;
+    linkedProjects?: LinkedProjectConfig[];
+  };
   search: {
     includeApps: boolean;
     includeFiles: boolean;

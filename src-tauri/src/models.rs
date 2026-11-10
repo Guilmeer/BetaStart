@@ -182,6 +182,12 @@ pub struct ProjectInfo {
     pub title: String,
     pub description: String,
     pub color: Option<String>,
+    /// Pasta raiz do projeto (workspace gerenciado ou pasta vinculada).
+    pub root_path: Option<String>,
+    /// `managed` (workspace do Beta Start) ou `linked` (pasta existente).
+    pub mode: String,
+    /// `false` quando uma pasta vinculada não está mais disponível.
+    pub available: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,6 +205,46 @@ pub struct Task {
     pub tags: Vec<String>,
     pub project: String,
     pub parent_id: Option<String>,
+}
+
+/// Visão compacta de uma task nas respostas MCP (menos tokens).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSummary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub due_iso: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remind_iso: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub project: String,
+}
+
+impl TaskSummary {
+    pub fn from_task(task: &Task) -> Self {
+        Self {
+            id: task.id.clone(),
+            title: task.title.clone(),
+            status: task.status.clone(),
+            priority: task.priority.clone(),
+            due_iso: task.due_iso.clone(),
+            // Lembrete igual ao vencimento é redundante na visão compacta.
+            remind_iso: task
+                .remind_iso
+                .clone()
+                .filter(|remind| task.due_iso.as_deref() != Some(remind.as_str())),
+            parent_id: task.parent_id.clone(),
+            tags: task.tags.clone(),
+            project: task.project.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

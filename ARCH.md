@@ -94,6 +94,26 @@ workspace/
 Um arquivo `.md` é interpretado pelo tipo declarado no frontmatter: `note`, `task` ou `project`.
 Qualquer outro arquivo (`*.md` sem frontmatter, imagens, PDFs etc.) é tratado como **file** (anexo).
 
+### 3.2.1 Projetos vinculados (pastas existentes)
+
+Um projeto também pode apontar para uma pasta já existente do usuário. Nesse caso:
+
+- o vínculo é registrado em `config.json` (`workspace.linkedProjects`: `slug`, `root`, `title`);
+- o Beta Start cria/gerencia apenas `<root>/.betastart/` (`project.md`, `notes/`, `tasks/`, `assets/`);
+- todos os `.md` da pasta são indexados **no lugar** e podem ser lidos/editados pelo app e pelo MCP;
+- a indexação respeita `.gitignore`, `.betastartignore` e ignores embutidos (`node_modules`, `dist`,
+  `target`, `.git`, etc.);
+- `.betastart/` é sempre indexado, mesmo que esteja no `.gitignore`;
+- notas/tasks criadas pela UI vão para `<root>/.betastart/notes` e `<root>/.betastart/tasks`;
+- um watcher (`notify`) observa workspace + roots vinculados e reindexa mudanças externas;
+- o mesmo watcher reconcilia `config.json` a cada 2s: vínculos feitos pelo MCP (`project.link`)
+  entram no estado do app e a UI atualiza sozinha, sem reabrir;
+- o sandbox de escrita (`ensure_allowed`) aceita workspace + roots vinculados, nada fora deles;
+- `project.link` (MCP) e `link_project` (UI) são idempotentes e aceitam `ignore` opcional, que é
+  acrescentado ao `.betastartignore` da pasta (sem duplicar linhas);
+- arquivos Markdown com frontmatter desconhecido preservam as chaves do usuário ao salvar.
+
+
 ---
 
 ## 4. Módulos e ordem de construção
@@ -595,15 +615,19 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
 
 | Tool | Escopo | Parâmetros | Retorno |
 |---|---|---|---|
-| `memory.read` | memory | `{ path: string }` | conteúdo do arquivo |
-| `memory.write` | memory | `{ path, content }` | ok |
+| `memory.read` | memory | `{ path, project? }` | conteúdo (absoluto, ou relativo ao projeto) |
+| `memory.write` | memory | `{ path, project?, content }` | ok (mesmos tipos do read) |
 | `memory.list` | memory | `{ project?: string }` | árvore/lista de arquivos |
-| `memory.search` | memory | `{ query, project? }` | hits (path, título, trecho) |
+| `memory.search` | memory | `{ query, project?, tags?, limit? }` | hits (todos os termos, em qualquer ordem) |
 | `project.list` | memory | — | projetos |
-| `project.create` | memory | `{ slug, title }` | projeto |
+| `project.create` | memory | `{ slug, title }` | projeto gerenciado no workspace |
+| `project.link` | memory | `{ root, title?, slug?, ignore? }` | projeto vinculado (idempotente; `ignore` vai para `.betastartignore`) |
+| `project.unlink` | memory | `{ slug }` | ok (não apaga arquivos) |
+| `project.brief` | memory | `{ project? }` | digest: metadados, notas com caminho relativo, contagem de tasks por status + primeiras abertas |
 | `graph.get` | memory | `{ project? }` | nós/arestas do grafo |
-| `tasks.list` | tasks | `{ project?, status?, priority? }` | tasks |
-| `tasks.create` | tasks | `{ title, project?, parent?, due?, priority?, tags? }` | task |
+| `tasks.list` | tasks | `{ project?, status?, query?, compact? }` | tasks (compactas por padrão: id/título/status/prioridade/due/tags) |
+| `tasks.create` | tasks | `{ title, project?, parent?, due?, priority?, tags?, body? }` | task compacta |
+| `tasks.create_many` | tasks | `{ project?, tasks: [...] }` | lote criado (até 100, um único reindex) |
 | `tasks.update` | tasks | `{ id, patch }` | task |
 | `tasks.delete` | tasks | `{ id }` | ok |
 | `windows.list` | windows | — | janelas abertas |
@@ -682,3 +706,4 @@ A camada `platform` (módulo 2) é a única que muda entre SOs; todo o resto é 
 | ADR-006 | MCP stdio + HTTP/SSE, token + escopos | compatibilidade máxima + segurança granular |
 | ADR-007 | Escopo por projeto + busca híbrida (sem embeddings) | economia de tokens sem custo de infraestrutura |
 | ADR-008 | MIT | adoção máxima |
+| ADR-009 | Projetos vinculados indexam `.md` da pasta do usuário no lugar | evita migração/cópia, mantém Git e editores externos; escritas do app ficam restritas a `<root>/.betastart` + arquivos escolhidos |

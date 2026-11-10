@@ -10,6 +10,7 @@ mod mcp;
 mod mcp_api;
 mod memory;
 mod memory_api;
+mod memory_watcher;
 mod models;
 mod platform;
 mod reminder_watcher;
@@ -78,6 +79,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -128,15 +130,23 @@ pub fn run() {
 
             // Indexação do workspace de memória + lembretes.
             let workspace_path = core::paths::expand(&config.workspace.path);
+            let linked_roots = memory::LinkedRoot::from_config(&config.workspace);
             {
                 let workspace_db = db_path.clone();
                 let workspace_dir = workspace_path.clone();
+                let linked = linked_roots.clone();
                 std::thread::spawn(move || {
                     if let Ok(conn) = db::open(&workspace_db) {
-                        let _ = memory::reindex(&conn, &workspace_dir);
+                        let _ = memory::reindex_with_linked(&conn, &workspace_dir, &linked);
                     }
                 });
             }
+            memory_watcher::start(
+                handle.clone(),
+                db_path.clone(),
+                workspace_path.clone(),
+                config_path.clone(),
+            );
             reminder_watcher::start(handle.clone(), db_path.clone());
 
             // Servidor MCP HTTP/SSE local.
@@ -162,6 +172,7 @@ pub fn run() {
             commands::list_installed_apps,
             commands::launch_app,
             commands::open_path,
+            commands::set_native_dialog_open,
             commands::copy_text,
             commands::list_clipboard,
             commands::delete_clipboard,
@@ -192,6 +203,8 @@ pub fn run() {
             memory_api::reindex_memory,
             memory_api::list_projects,
             memory_api::create_project,
+            memory_api::link_project,
+            memory_api::unlink_project,
             memory_api::list_memory_files,
             memory_api::read_note,
             memory_api::save_note,
@@ -221,6 +234,9 @@ pub fn run() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Focused(false) => {
+                if state::NATIVE_DIALOG_OPEN.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 let app = window.app_handle();
                 let hide_on_blur = app
                     .state::<state::AppState>()

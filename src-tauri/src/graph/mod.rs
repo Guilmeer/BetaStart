@@ -141,6 +141,11 @@ pub fn build_graph(conn: &Connection, project: Option<&str>) -> AppResult<Graph>
     }
 
     // task pai -> subtask
+    //
+    // `tasks_index` é global, mas o grafo pode estar filtrado por projeto.
+    // Sem checar `seen_nodes`, uma subtask cujo pai está em outro projeto gera
+    // uma aresta apontando para um nó inexistente — e o forceLink do frontend
+    // lança "node not found" no meio do render (a tela travava).
     for (child_id, parent_id) in &task_parents {
         let Some(child_path) = task_paths.get(child_id) else {
             continue;
@@ -148,6 +153,9 @@ pub fn build_graph(conn: &Connection, project: Option<&str>) -> AppResult<Graph>
         let Some(parent_path) = task_paths.get(parent_id) else {
             continue;
         };
+        if !seen_nodes.contains(child_path) || !seen_nodes.contains(parent_path) {
+            continue;
+        }
         let edge_key = format!("{parent_path}->{child_path}:parent");
         if seen_edges.insert(edge_key) {
             edges.push(GraphEdge {
@@ -261,6 +269,16 @@ mod tests {
                     content: String::new(),
                     updated_at: 0,
                 },
+                MemoryRow {
+                    file_path: "q/a.md".into(),
+                    kind: "task".into(),
+                    title: "Task do projeto q".into(),
+                    project: "q".into(),
+                    tags: vec![],
+                    links: vec![],
+                    content: String::new(),
+                    updated_at: 0,
+                },
             ],
         )
         .expect("memory");
@@ -294,6 +312,20 @@ mod tests {
                     parent_id: Some("t1".into()),
                     updated_at: 0,
                 },
+                TaskRow {
+                    id: "t3".into(),
+                    file_path: "q/a.md".into(),
+                    title: "Task do projeto q".into(),
+                    status: "todo".into(),
+                    priority: "medium".into(),
+                    due: None,
+                    remind: None,
+                    tags: vec![],
+                    project: "q".into(),
+                    // Pai em outro projeto: não pode virar aresta no grafo de "q".
+                    parent_id: Some("t1".into()),
+                    updated_at: 0,
+                },
             ],
         )
         .expect("tasks");
@@ -305,6 +337,22 @@ mod tests {
         assert!(graph.edges.iter().any(|edge| edge.kind == "parent"));
         assert!(graph.edges.iter().any(|edge| edge.kind == "link"));
         assert!(graph.nodes.iter().any(|node| node.kind == "missing"));
+
+        // Grafo filtrado por projeto não pode ter aresta para nó de fora.
+        let filtered = build_graph(&conn, Some("q")).expect("graph q");
+        let ids: HashSet<&str> = filtered.nodes.iter().map(|node| node.id.as_str()).collect();
+        for edge in &filtered.edges {
+            assert!(
+                ids.contains(edge.source.as_str()),
+                "aresta com origem ausente: {}",
+                edge.source
+            );
+            assert!(
+                ids.contains(edge.target.as_str()),
+                "aresta com destino ausente: {}",
+                edge.target
+            );
+        }
 
         let _ = std::fs::remove_file(&db_path);
     }

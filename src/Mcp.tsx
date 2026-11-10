@@ -24,6 +24,7 @@ export function Mcp({ onBack }: { onBack: () => void }) {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [clients, setClients] = useState<McpClient[]>([]);
   const [exePath, setExePath] = useState("");
+  const [logPath, setLogPath] = useState("");
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([...SCOPES]);
   const [created, setCreated] = useState<McpClientCreated | null>(null);
@@ -32,14 +33,23 @@ export function Mcp({ onBack }: { onBack: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [serverStatus, list, exe] = await Promise.all([
+      const [serverStatus, list, exe, paths] = await Promise.all([
         api.mcpStatus(),
         api.mcpListClients(),
         api.mcpExePath(),
+        api.getPaths(),
       ]);
       setStatus(serverStatus);
       setClients(list);
       setExePath(exe);
+      const separatorIndex = Math.max(
+        paths.config.lastIndexOf("\\"),
+        paths.config.lastIndexOf("/"),
+      );
+      const separator = separatorIndex >= 0 ? paths.config[separatorIndex] : "/";
+      setLogPath(
+        `${paths.config.slice(0, separatorIndex)}${separator}mcp-stdio.log`,
+      );
     } catch (error) {
       setMessage(String(error));
     }
@@ -84,6 +94,14 @@ export function Mcp({ onBack }: { onBack: () => void }) {
       setMessage(String(error));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const openLog = async () => {
+    try {
+      await api.openPath(logPath);
+    } catch (error) {
+      setMessage(String(error));
     }
   };
 
@@ -138,6 +156,27 @@ export function Mcp({ onBack }: { onBack: () => void }) {
         </div>
         <div className="field-hint">
           stdio: <code>betastart mcp --token &lt;token&gt;</code>
+        </div>
+      </div>
+
+      <div className="ext-card">
+        <div className="ext-card-row">
+          <strong>Log de diagnóstico</strong>
+          <button
+            className="secondary"
+            disabled={!logPath}
+            onClick={() => void openLog()}
+          >
+            Abrir
+          </button>
+        </div>
+        <div className="field-hint">
+          <code>{logPath || "carregando…"}</code>
+        </div>
+        <div className="field-hint">
+          Se uma conexão cair, o log mostra se o processo saiu sozinho (EOF) ou
+          foi encerrado pelo cliente. Defina <code>BETASTART_MCP_TRACE=1</code>{" "}
+          para registrar cada método.
         </div>
       </div>
 

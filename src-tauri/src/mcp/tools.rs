@@ -1,5 +1,6 @@
 //! Definições e implementação das tools MCP.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -7,7 +8,9 @@ use serde_json::{Value, json};
 use crate::db;
 use crate::mcp::McpContext;
 use crate::memory::{self, Frontmatter};
-use crate::models::{McpClient, MemoryFile, NoteDetail, ProjectInfo, RunResult, Task, TaskPatch};
+use crate::models::{
+    McpClient, MemoryFile, NoteDetail, ProjectInfo, RunResult, Task, TaskPatch, TaskSummary,
+};
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
     json!({
@@ -60,7 +63,7 @@ pub fn definitions() -> Vec<Value> {
     vec![
         tool(
             "memory.list",
-            "List notes, tasks and projects in the workspace.",
+            "List notes, tasks and projects in the workspace and linked project folders.",
             json!({
                 "type": "object",
                 "properties": { "project": { "type": "string", "description": "Project slug or 'global'" } }
@@ -68,20 +71,24 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "memory.read",
-            "Read a Markdown memory file (raw content).",
+            "Read a Markdown memory file (raw content) from the workspace or a linked project. Accepts an absolute path, or a path relative to `project` (as returned by project.brief).",
             json!({
                 "type": "object",
-                "properties": { "path": { "type": "string" } },
+                "properties": {
+                    "path": { "type": "string" },
+                    "project": { "type": "string", "description": "Required when `path` is relative" }
+                },
                 "required": ["path"]
             }),
         ),
         tool(
             "memory.write",
-            "Write raw Markdown to a memory file (creates parent folders).",
+            "Write raw Markdown to a memory file in the workspace or a linked project (creates parent folders). Also accepts .betastartignore/.gitignore and files inside .betastart/. Relative paths are resolved against `project`.",
             json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
+                    "project": { "type": "string", "description": "Required when `path` is relative" },
                     "content": { "type": "string" }
                 },
                 "required": ["path", "content"]
@@ -103,12 +110,12 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "project.list",
-            "List projects.",
+            "List managed projects and projects linked to existing user folders.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
             "project.create",
-            "Create a project folder with project.md.",
+            "Create a managed project folder with project.md inside the workspace.",
             json!({
                 "type": "object",
                 "properties": {
@@ -116,6 +123,43 @@ pub fn definitions() -> Vec<Value> {
                     "title": { "type": "string" }
                 },
                 "required": ["title"]
+            }),
+        ),
+        tool(
+            "project.link",
+            "Link an existing folder on disk as a Beta Start project, without copying or moving files. Indexes its Markdown in place and creates <root>/.betastart/ for the manifest. Optional `ignore` entries are appended to <root>/.betastartignore.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "root": { "type": "string", "description": "Absolute path of an existing folder (supports ~/)" },
+                    "title": { "type": "string", "description": "Display name; defaults to the folder name or the project.md title" },
+                    "slug": { "type": "string", "description": "Project slug; defaults to the existing project.md slug or the title" },
+                    "ignore": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Entries appended to .betastartignore (gitignore syntax), e.g. ['SkillAndPlugin/', 'examples/']"
+                    }
+                },
+                "required": ["root"]
+            }),
+        ),
+        tool(
+            "project.unlink",
+            "Unlink a linked project from Beta Start. No user files are deleted; only the link is removed.",
+            json!({
+                "type": "object",
+                "properties": { "slug": { "type": "string" } },
+                "required": ["slug"]
+            }),
+        ),
+        tool(
+            "project.brief",
+            "Compact digest of one project: metadata, note list (relative paths), task counts by status and the first open tasks. Costs ~300-600 tokens instead of project.list + memory.list + tasks.list.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project slug; defaults to the active project" }
+                }
             }),
         ),
         tool(
@@ -128,19 +172,20 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "tasks.list",
-            "List tasks with optional filters.",
+            "List tasks with optional filters. Compact by default (id, title, status, priority, due, tags); pass compact=false for full records with file paths.",
             json!({
                 "type": "object",
                 "properties": {
                     "project": { "type": "string" },
                     "status": { "type": "string" },
-                    "query": { "type": "string" }
+                    "query": { "type": "string" },
+                    "compact": { "type": "boolean", "description": "Default true" }
                 }
             }),
         ),
         tool(
             "tasks.create",
-            "Create a task (Markdown file with frontmatter).",
+            "Create a task (Markdown file with frontmatter). Returns a compact task summary.",
             json!({
                 "type": "object",
                 "properties": {
@@ -154,6 +199,33 @@ pub fn definitions() -> Vec<Value> {
                     "body": { "type": "string" }
                 },
                 "required": ["title"]
+            }),
+        ),
+        tool(
+            "tasks.create_many",
+            "Create many tasks in one call (e.g. a development plan). Writes all files, reindexes once and returns compact summaries. Use `parent` with an existing task id for subtasks.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string" },
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": { "type": "string" },
+                                "parent": { "type": "string" },
+                                "due": { "type": "string" },
+                                "remind": { "type": "string" },
+                                "priority": { "type": "string" },
+                                "tags": { "type": "array", "items": { "type": "string" } },
+                                "body": { "type": "string" }
+                            },
+                            "required": ["title"]
+                        }
+                    }
+                },
+                "required": ["tasks"]
             }),
         ),
         tool(
@@ -312,6 +384,18 @@ pub fn call(
             require_scope(client, "memory")?;
             project_create(ctx, &args)
         }
+        "project.link" => {
+            require_scope(client, "memory")?;
+            project_link(ctx, &args)
+        }
+        "project.unlink" => {
+            require_scope(client, "memory")?;
+            project_unlink(ctx, &args)
+        }
+        "project.brief" => {
+            require_scope(client, "memory")?;
+            project_brief(ctx, &args)
+        }
         "graph.get" => {
             require_scope(client, "memory")?;
             graph_get(ctx, &args)
@@ -323,6 +407,10 @@ pub fn call(
         "tasks.create" => {
             require_scope(client, "tasks")?;
             tasks_create(ctx, &args)
+        }
+        "tasks.create_many" => {
+            require_scope(client, "tasks")?;
+            tasks_create_many(ctx, &args)
         }
         "tasks.update" => {
             require_scope(client, "tasks")?;
@@ -382,24 +470,70 @@ fn memory_list(ctx: &McpContext, args: &Value) -> Result<String, String> {
     text_result(&files)
 }
 
+/// Resolve `path` absoluto ou relativo ao projeto informado (ou projeto ativo).
+fn resolve_memory_path(ctx: &McpContext, args: &Value) -> Result<PathBuf, String> {
+    let raw = arg_str(args, "path").ok_or_else(|| "path is required".to_string())?;
+    let path = PathBuf::from(&raw);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+
+    let slug = arg_str(args, "project")
+        .filter(|value| !value.is_empty() && value != "all")
+        .or_else(|| ctx.config.workspace.active_project.clone())
+        .ok_or_else(|| {
+            "relative path requires 'project' (or an active project); use project.list".to_string()
+        })?;
+    let dir = memory::project_dir(&ctx.workspace, &ctx.linked, &slug)
+        .ok_or_else(|| format!("project '{slug}' not found"))?;
+    Ok(dir.join(path))
+}
+
 fn memory_read(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let path = arg_str(args, "path").ok_or_else(|| "path is required".to_string())?;
-    let path_buf = PathBuf::from(&path);
-    memory::ensure_inside(&ctx.workspace, &path_buf).map_err(|e| e.to_string())?;
+    let path_buf = resolve_memory_path(ctx, args)?;
+    ensure_text_path(&path_buf)?;
+    memory::ensure_allowed(&ctx.workspace, &ctx.linked, &path_buf).map_err(|e| e.to_string())?;
     std::fs::read_to_string(&path_buf).map_err(|e| e.to_string())
 }
 
 fn memory_write(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let path = arg_str(args, "path").ok_or_else(|| "path is required".to_string())?;
     let content = arg_str(args, "content").ok_or_else(|| "content is required".to_string())?;
-    let path_buf = PathBuf::from(&path);
-    memory::ensure_inside(&ctx.workspace, &path_buf).map_err(|e| e.to_string())?;
+    let path_buf = resolve_memory_path(ctx, args)?;
+    ensure_text_path(&path_buf)?;
+    memory::ensure_allowed(&ctx.workspace, &ctx.linked, &path_buf).map_err(|e| e.to_string())?;
     if let Some(parent) = path_buf.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::write(&path_buf, content).map_err(|e| e.to_string())?;
     ctx.reindex().map_err(|e| e.to_string())?;
-    text_result(&json!({ "ok": true, "path": path }))
+    text_result(&json!({ "ok": true, "path": path_buf.to_string_lossy() }))
+}
+
+/// Aceita Markdown, arquivos de ignore e qualquer arquivo dentro de `.betastart/`.
+fn ensure_text_path(path: &Path) -> Result<(), String> {
+    let is_markdown = path
+        .extension()
+        .map(|extension| extension.eq_ignore_ascii_case("md"))
+        .unwrap_or(false);
+    let is_ignore_file = path
+        .file_name()
+        .map(|name| {
+            let name = name.to_string_lossy();
+            name.eq_ignore_ascii_case(".betastartignore") || name.eq_ignore_ascii_case(".gitignore")
+        })
+        .unwrap_or(false);
+    let in_betastart_dir = path
+        .components()
+        .any(|component| component.as_os_str().eq_ignore_ascii_case(".betastart"));
+
+    if is_markdown || is_ignore_file || in_betastart_dir {
+        Ok(())
+    } else {
+        Err(
+            "memory tools accept Markdown (.md), .betastartignore/.gitignore and files inside .betastart/"
+                .into(),
+        )
+    }
 }
 
 fn memory_search(ctx: &McpContext, args: &Value) -> Result<String, String> {
@@ -413,38 +547,22 @@ fn memory_search(ctx: &McpContext, args: &Value) -> Result<String, String> {
 }
 
 fn project_list(ctx: &McpContext) -> Result<String, String> {
-    let projects_dir = ctx.workspace.join("projects");
-    let mut out: Vec<ProjectInfo> = Vec::new();
-
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Ok((frontmatter, _)) = memory::read_note_file(&path.join("project.md")) else {
-                continue;
-            };
-            let slug = frontmatter.slug.clone().or_else(|| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-            });
-            out.push(ProjectInfo {
-                slug: slug.unwrap_or_default(),
-                title: frontmatter.title.unwrap_or_default(),
-                description: frontmatter.description.unwrap_or_default(),
-                color: frontmatter.color,
-            });
-        }
-    }
-
-    out.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
-    text_result(&out)
+    let projects =
+        memory::list_projects(&ctx.workspace, &ctx.linked).map_err(|e| e.to_string())?;
+    text_result(&projects)
 }
 
 fn project_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
     let title = arg_str(args, "title").ok_or_else(|| "title is required".to_string())?;
     let slug = memory::sanitize_slug(&arg_str(args, "slug").unwrap_or_else(|| title.clone()));
+    let existing =
+        memory::list_projects(&ctx.workspace, &ctx.linked).map_err(|e| e.to_string())?;
+    if existing
+        .iter()
+        .any(|project| project.slug.eq_ignore_ascii_case(&slug))
+    {
+        return Err("project already exists".into());
+    }
     let dir = ctx.workspace.join("projects").join(&slug);
     let project_file = dir.join("project.md");
     if project_file.exists() {
@@ -474,7 +592,143 @@ fn project_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
         title: frontmatter.title.unwrap_or_default(),
         description: String::new(),
         color: frontmatter.color,
+        root_path: Some(dir.to_string_lossy().to_string()),
+        mode: "managed".into(),
+        available: true,
     })
+}
+
+fn project_link(ctx: &mut McpContext, args: &Value) -> Result<String, String> {
+    let root = arg_str(args, "root").ok_or_else(|| "root is required".to_string())?;
+    let title = arg_str(args, "title");
+    let slug = arg_str(args, "slug");
+    let ignore = arg_vec(args, "ignore").unwrap_or_default();
+
+    let project = memory::link_project(
+        &ctx.workspace,
+        &mut ctx.config.workspace,
+        &root,
+        title,
+        slug,
+        &ignore,
+    )
+    .map_err(|e| e.to_string())?;
+
+    ctx.save_config().map_err(|e| e.to_string())?;
+    ctx.linked = memory::LinkedRoot::from_config(&ctx.config.workspace);
+    ctx.reindex().map_err(|e| e.to_string())?;
+    let indexed_files = db::memory::list_files(&ctx.db, Some(&project.slug))
+        .map(|files| files.len())
+        .unwrap_or(0);
+
+    text_result(&json!({
+        "project": project,
+        "indexedFiles": indexed_files,
+        "hint": "The Beta Start window refreshes automatically within ~2 seconds."
+    }))
+}
+
+fn project_unlink(ctx: &mut McpContext, args: &Value) -> Result<String, String> {
+    let slug = arg_str(args, "slug").ok_or_else(|| "slug is required".to_string())?;
+
+    memory::unlink_project(&mut ctx.config.workspace, &slug).map_err(|e| e.to_string())?;
+    ctx.save_config().map_err(|e| e.to_string())?;
+    ctx.linked = memory::LinkedRoot::from_config(&ctx.config.workspace);
+    ctx.reindex().map_err(|e| e.to_string())?;
+
+    text_result(&json!({ "ok": true, "slug": slug }))
+}
+
+fn relative_path(root: Option<&str>, path: &str) -> String {
+    if let Some(root) = root {
+        if let Ok(relative) = Path::new(path).strip_prefix(root) {
+            return relative.to_string_lossy().replace('\\', "/");
+        }
+    }
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Digest compacto de um projeto (~300-600 tokens): metadados, arquivos de
+/// memória com caminho relativo e resumo de tasks. Evita encadear
+/// `project.list` + `memory.list` + `tasks.list`.
+fn project_brief(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let requested = arg_str(args, "project")
+        .filter(|value| !value.is_empty() && value != "all")
+        .or_else(|| ctx.config.workspace.active_project.clone())
+        .ok_or_else(|| {
+            "project is required (no active project set); use project.list".to_string()
+        })?;
+
+    let projects = memory::list_projects(&ctx.workspace, &ctx.linked).map_err(|e| e.to_string())?;
+    let project = projects
+        .into_iter()
+        .find(|item| item.slug == requested)
+        .ok_or_else(|| format!("project '{requested}' not found"))?;
+
+    let files =
+        db::memory::list_files(&ctx.db, Some(&project.slug)).map_err(|e| e.to_string())?;
+    let root = project.root_path.as_deref();
+
+    let mut notes: Vec<Value> = files
+        .iter()
+        .filter(|file| file.kind != "task")
+        .map(|file| {
+            json!({
+                "name": file.name,
+                "title": file.title,
+                "kind": file.kind,
+                "path": relative_path(root, &file.path),
+            })
+        })
+        .collect();
+    // O manifesto do projeto vem primeiro; depois a ordem do índice.
+    notes.sort_by_key(|note| note["kind"].as_str() != Some("project"));
+    let notes_total = notes.len();
+    notes.truncate(25);
+
+    let tasks =
+        db::tasks::list(&ctx.db, Some(&project.slug), None, None).map_err(|e| e.to_string())?;
+    let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
+    for task in &tasks {
+        *by_status.entry(task.status.clone()).or_default() += 1;
+    }
+    let open: Vec<TaskSummary> = tasks
+        .iter()
+        .filter(|task| task.status != "done")
+        .take(8)
+        .map(|task| {
+            let mut summary = TaskSummary::from_task(task);
+            summary.project.clear();
+            summary
+        })
+        .collect();
+    let open_shown = open.len();
+
+    text_result(&json!({
+        "project": {
+            "slug": project.slug,
+            "title": project.title,
+            "description": project.description,
+            "rootPath": project.root_path,
+            "mode": project.mode,
+            "available": project.available,
+        },
+        "files": {
+            "total": files.len(),
+            "notes": notes_total,
+        },
+        "notes": notes,
+        "notesTruncated": notes_total > 25,
+        "tasks": {
+            "total": tasks.len(),
+            "byStatus": by_status,
+            "open": open,
+            "openShown": open_shown,
+        },
+    }))
 }
 
 fn graph_get(ctx: &McpContext, args: &Value) -> Result<String, String> {
@@ -485,69 +739,157 @@ fn graph_get(ctx: &McpContext, args: &Value) -> Result<String, String> {
 }
 
 fn tasks_list(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let project = arg_str(args, "project");
-    let status = arg_str(args, "status");
-    let query = arg_str(args, "query");
-    let tasks = db::tasks::list(
-        &ctx.db,
-        project.as_deref(),
-        status.as_deref(),
-        query.as_deref(),
-    )
-    .map_err(|e| e.to_string())?;
-    text_result(&tasks)
+    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+    let status = arg_str(args, "status").filter(|value| !value.is_empty());
+    let query = arg_str(args, "query").filter(|value| !value.is_empty());
+    let compact = args
+        .get("compact")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+
+    let tasks =
+        db::tasks::list(&ctx.db, project.as_deref(), status.as_deref(), query.as_deref())
+            .map_err(|e| e.to_string())?;
+
+    if !compact {
+        return text_result(&tasks);
+    }
+
+    let scoped = project.is_some();
+    let summaries: Vec<TaskSummary> = tasks
+        .iter()
+        .map(|task| {
+            let mut summary = TaskSummary::from_task(task);
+            if scoped {
+                summary.project.clear();
+            }
+            summary
+        })
+        .collect();
+    text_result(&summaries)
 }
 
-fn tasks_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let title = arg_str(args, "title").ok_or_else(|| "title is required".to_string())?;
-    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+struct NewTaskSpec {
+    title: String,
+    parent: Option<String>,
+    due: Option<String>,
+    remind: Option<String>,
+    priority: Option<String>,
+    tags: Vec<String>,
+    body: String,
+}
 
-    let dir = match project.as_deref() {
-        Some(slug) if slug != "global" && ctx.workspace.join("projects").join(slug).exists() => {
-            ctx.workspace.join("projects").join(slug).join("tasks")
-        }
-        _ => ctx.workspace.join("global").join("tasks"),
+fn task_spec(value: &Value) -> Result<NewTaskSpec, String> {
+    let title = arg_str(value, "title")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if title.is_empty() {
+        return Err("title is required".to_string());
+    }
+    let due = arg_str(value, "due").filter(|item| !item.trim().is_empty());
+    let remind = arg_str(value, "remind")
+        .filter(|item| !item.trim().is_empty())
+        .or_else(|| due.clone());
+
+    Ok(NewTaskSpec {
+        title,
+        parent: arg_str(value, "parent").filter(|item| !item.trim().is_empty()),
+        due,
+        remind,
+        priority: arg_str(value, "priority").filter(|item| !item.trim().is_empty()),
+        tags: arg_vec(value, "tags").unwrap_or_default(),
+        body: arg_str(value, "body").unwrap_or_default(),
+    })
+}
+
+fn write_task_file(
+    ctx: &McpContext,
+    project: Option<&str>,
+    spec: &NewTaskSpec,
+) -> Result<String, String> {
+    let dir = match project {
+        Some(slug) => memory::tasks_dir(&ctx.workspace, &ctx.linked, slug)
+            .ok_or_else(|| format!("project '{slug}' not found"))?,
+        None => ctx.workspace.join("global").join("tasks"),
     };
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let id = uuid::Uuid::new_v4().to_string();
-    let base = memory::sanitize_slug(&title);
+    let base = memory::sanitize_slug(&spec.title);
     let path = dir.join(format!("{base}-{}.md", &id[..8]));
 
     let now = memory::now_iso();
-    let due = arg_str(args, "due").filter(|value| !value.trim().is_empty());
-    let remind = arg_str(args, "remind")
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| due.clone());
-    let body = arg_str(args, "body").unwrap_or_default();
-
     let frontmatter = Frontmatter {
         kind: Some("task".into()),
         id: Some(id.clone()),
-        title: Some(title.trim().to_string()),
-        tags: arg_vec(args, "tags").unwrap_or_default(),
-        project: project.filter(|value| value != "global"),
+        title: Some(spec.title.clone()),
+        tags: spec.tags.clone(),
+        project: project.filter(|value| *value != "global").map(str::to_string),
         status: Some("todo".into()),
         priority: Some(
-            arg_str(args, "priority")
-                .filter(|value| !value.is_empty())
+            spec.priority
+                .clone()
                 .unwrap_or_else(|| "medium".into()),
         ),
-        due,
-        remind,
-        parent: arg_str(args, "parent").filter(|value| !value.is_empty()),
+        due: spec.due.clone(),
+        remind: spec.remind.clone(),
+        parent: spec.parent.clone(),
         created: Some(now.clone()),
         updated: Some(now),
         ..Default::default()
     };
 
-    memory::write_note_file(&path, &frontmatter, &body).map_err(|e| e.to_string())?;
+    memory::write_note_file(&path, &frontmatter, &spec.body).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+fn tasks_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+    let spec = task_spec(args)?;
+    let id = write_task_file(ctx, project.as_deref(), &spec)?;
     ctx.reindex().map_err(|e| e.to_string())?;
 
     let task = db::tasks::get(&ctx.db, &id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "task not found after create".to_string())?;
-    text_result(&task)
+    text_result(&TaskSummary::from_task(&task))
+}
+
+fn tasks_create_many(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+    let items = args
+        .get("tasks")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "tasks is required".to_string())?;
+    if items.len() > 100 {
+        return Err("at most 100 tasks per call".to_string());
+    }
+    if items.is_empty() {
+        return text_result(&json!({ "created": 0, "tasks": [] }));
+    }
+
+    let mut ids = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let spec = task_spec(item).map_err(|error| format!("tasks[{index}]: {error}"))?;
+        ids.push(write_task_file(ctx, project.as_deref(), &spec)?);
+    }
+    ctx.reindex().map_err(|e| e.to_string())?;
+
+    let scoped = project.is_some();
+    let mut summaries = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let task = db::tasks::get(&ctx.db, id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "task not found after create".to_string())?;
+        let mut summary = TaskSummary::from_task(&task);
+        if scoped {
+            summary.project.clear();
+        }
+        summaries.push(summary);
+    }
+
+    text_result(&json!({ "created": summaries.len(), "tasks": summaries }))
 }
 
 fn tasks_update(ctx: &McpContext, args: &Value) -> Result<String, String> {
@@ -556,7 +898,7 @@ fn tasks_update(ctx: &McpContext, args: &Value) -> Result<String, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "task not found".to_string())?;
     let path = Path::new(&file_path).to_path_buf();
-    memory::ensure_inside(&ctx.workspace, &path).map_err(|e| e.to_string())?;
+    memory::ensure_allowed(&ctx.workspace, &ctx.linked, &path).map_err(|e| e.to_string())?;
 
     let (mut frontmatter, mut body) = memory::read_note_file(&path).map_err(|e| e.to_string())?;
 
@@ -588,7 +930,7 @@ fn tasks_update(ctx: &McpContext, args: &Value) -> Result<String, String> {
     }
     frontmatter.updated = Some(memory::now_iso());
 
-    memory::write_note_file(&path, &frontmatter, &body).map_err(|e| e.to_string())?;
+    memory::write_note_file_preserving(&path, &frontmatter, &body).map_err(|e| e.to_string())?;
     ctx.reindex().map_err(|e| e.to_string())?;
 
     let task = db::tasks::get(&ctx.db, &id)
@@ -603,7 +945,7 @@ fn tasks_delete(ctx: &McpContext, args: &Value) -> Result<String, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "task not found".to_string())?;
     let path = Path::new(&file_path);
-    memory::ensure_inside(&ctx.workspace, path).map_err(|e| e.to_string())?;
+    memory::ensure_allowed(&ctx.workspace, &ctx.linked, path).map_err(|e| e.to_string())?;
     if path.exists() {
         std::fs::remove_file(path).map_err(|e| e.to_string())?;
     }
@@ -793,6 +1135,7 @@ fn settings_set(ctx: &mut McpContext, args: &Value) -> Result<String, String> {
     ctx.config = ctx.config.merged(patch).map_err(|e| e.to_string())?;
     ctx.save_config().map_err(|e| e.to_string())?;
     ctx.workspace = crate::core::paths::expand(&ctx.config.workspace.path);
+    ctx.linked = crate::memory::LinkedRoot::from_config(&ctx.config.workspace);
     crate::core::paths::ensure_workspace(&ctx.config.workspace.path).map_err(|e| e.to_string())?;
 
     if ctx.workspace != old_workspace {

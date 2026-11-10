@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import "./App.css";
 import { api } from "./api";
@@ -94,6 +95,30 @@ function App() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // O config.json também muda por fora (ex.: MCP vinculando um projeto).
+  useEffect(() => {
+    let active = true;
+    const unlistenPromise = listen("config-changed", () => {
+      if (!active) return;
+      void (async () => {
+        try {
+          const [cfg, st] = await Promise.all([api.getConfig(), api.getStatus()]);
+          if (!active) return;
+          setStatus(st);
+          // Não sobrescreve edições ainda não salvas na tela de configurações.
+          if (screen !== "settings") applyConfig(cfg);
+        } catch (error) {
+          console.error("Falha ao recarregar configuração:", error);
+        }
+      })();
+    });
+
+    return () => {
+      active = false;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [applyConfig, screen]);
 
   useEffect(() => {
     if (screen === "search") {

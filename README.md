@@ -196,10 +196,59 @@ Abra **🔌** na barra superior.
 ### Tools
 
 `memory.list`, `memory.read`, `memory.write`, `memory.search`, `project.list`,
-`project.create`, `graph.get`, `tasks.list`, `tasks.create`, `tasks.update`,
-`tasks.delete`, `windows.list`, `windows.move_resize`, `windows.apply_layout`,
+`project.create`, `project.link`, `project.unlink`, `project.brief`, `graph.get`,
+`tasks.list`, `tasks.create`, `tasks.create_many`, `tasks.update`, `tasks.delete`,
+`windows.list`, `windows.move_resize`, `windows.apply_layout`,
 `windows.save_layout`, `extensions.list`, `extensions.run`, `search.query`,
 `clipboard.list`, `settings.get`, `settings.set`.
+
+Respostas pensadas para gastar poucos tokens:
+
+- `tasks.list` vem **compacto** (`id`, `title`, `status`, `priority`, `due`, tags):
+  ~166 bytes/task contra ~417 do registro completo — use `compact: false` se
+  precisar do caminho do arquivo.
+- `tasks.create_many` cria um plano inteiro numa chamada, reindexando uma vez só.
+- `project.brief` devolve um digest do projeto (metadados, notas com caminho
+  **relativo**, contagem de tasks por status e as primeiras tasks abertas) em
+  ~1,3 KB, sem precisar encadear `project.list` + `memory.list` + `tasks.list`.
+- `memory.read` aceita o caminho relativo devolvido pelo brief, junto com `project`.
+
+Fluxo econômico típico:
+
+```json
+{ "project": "prisma-historico" }                          // project.brief
+{ "project": "prisma-historico", "path": "MEMORIA.md" }     // memory.read
+{ "project": "prisma-historico", "tasks": [ { "title": "..." } ] }  // tasks.create_many
+{ "project": "prisma-historico", "status": "todo" }         // tasks.list
+```
+
+Para trabalhar num projeto que já existe no disco, use `project.link` (a pasta é
+indexada no lugar, sem copiar nada):
+
+```json
+{ "root": "E:\\projetos\\meu-projeto", "ignore": ["examples/", "vendor/"] }
+```
+
+A UI reflete o vínculo em ~2s, sem reiniciar o app.
+
+### Diagnóstico do stdio
+
+Se um cliente MCP não conectar, o servidor grava um log em
+`%APPDATA%\com.betastart.app\mcp-stdio.log` (início, tempo de carga, token,
+EOF, panics) — o mesmo arquivo pode ser aberto em **🔌 → Log de diagnóstico**.
+Defina `BETASTART_MCP_TRACE=1` para registrar também cada método recebido.
+
+Como ler o log:
+
+- termina em `stdin fechado (EOF)` → o cliente encerrou a conexão;
+- termina em `pronto em …` e não tem EOF → o processo foi **morto por fora**;
+- termina em `erro (exit N)` → falha real do servidor (o motivo está na linha).
+
+O código `255` no Windows costuma ser o **OpenCode matando o processo** (por
+timeout no `initialize` ou após um erro de transporte), não um crash do Beta
+Start. Nesse caso, `opencode reload` (ou qualquer escrita no `opencode.json`)
+força o respawn — o OpenCode ainda não reinicia sozinho um servidor que caiu
+([issue #53226](https://github.com/anomalyco/opencode/issues/53226)).
 
 ### CLI
 

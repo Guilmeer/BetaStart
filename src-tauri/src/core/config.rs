@@ -168,6 +168,18 @@ pub struct WorkspaceConfig {
     pub path: String,
     #[serde(default)]
     pub active_project: Option<String>,
+    /// Projetos vinculados a pastas existentes do usuário.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_projects: Vec<LinkedProjectConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedProjectConfig {
+    pub slug: String,
+    pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 impl Default for WorkspaceConfig {
@@ -175,6 +187,7 @@ impl Default for WorkspaceConfig {
         Self {
             path: default_workspace_path(),
             active_project: None,
+            linked_projects: Vec::new(),
         }
     }
 }
@@ -351,6 +364,27 @@ impl Default for AppearanceConfig {
     }
 }
 
+/// Grava o config via arquivo temporário + rename, para que outro processo
+/// (ex.: o servidor MCP) nunca leia um `config.json` pela metade.
+fn write_atomic(path: &Path, content: &str) -> AppResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "config.json".into());
+    let tmp = path.with_file_name(format!("{name}.{}.tmp", std::process::id()));
+
+    if std::fs::write(&tmp, content).is_ok() && std::fs::rename(&tmp, path).is_ok() {
+        return Ok(());
+    }
+    let _ = std::fs::remove_file(&tmp);
+    // Fallback (ex.: antivírus/OneDrive segurando o arquivo): grava direto.
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
 impl Config {
     /// Carrega o `config.json` ou cria um com os padrões.
     /// Também aplica migrações de valores antigos (ex.: modo `win_x`).
@@ -362,7 +396,7 @@ impl Config {
             // Persiste defaults novos (ex.: seção `extensions`) e migrações.
             let serialized = serde_json::to_string_pretty(&cfg)?;
             if serialized != raw {
-                std::fs::write(path, serialized)?;
+                write_atomic(path, &serialized)?;
             }
             Ok(cfg)
         } else {
@@ -374,12 +408,8 @@ impl Config {
     }
 
     pub fn save(&self, path: &Path) -> AppResult<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let raw = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, raw)?;
-        Ok(())
+        write_atomic(path, &raw)
     }
 
     /// Aplica um patch parcial (JSON) sobre a configuração atual.
@@ -432,5 +462,43 @@ pub fn deep_merge(base: &mut Value, patch: Value) {
             }
         }
         other => *base = other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saves_config_atomically_and_reloads() {
+        let base = std::env::temp_dir().join(format!(
+            "betastart-config-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("dir");
+        let path = base.join("config.json");
+
+        let mut config = Config::default();
+        config.workspace.active_project = Some("prisma-historico".into());
+        config.save(&path).expect("save");
+
+        let raw = std::fs::read_to_string(&path).expect("raw");
+        assert!(raw.contains("prisma-historico"));
+
+        let loaded = Config::load_or_default(&path).expect("load");
+        assert_eq!(
+            loaded.workspace.active_project.as_deref(),
+            Some("prisma-historico")
+        );
+
+        let leftovers: Vec<_> = std::fs::read_dir(&base)
+            .expect("dir")
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

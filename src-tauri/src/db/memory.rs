@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use rusqlite::{Connection, params};
+use rusqlite::types::Value;
+use rusqlite::{Connection, params, params_from_iter};
 
 use crate::error::AppResult;
 use crate::models::{MemoryFile, MemoryHit, MemoryRow};
@@ -74,32 +75,51 @@ pub fn search(
     tags: &[String],
     limit: usize,
 ) -> AppResult<Vec<MemoryHit>> {
-    let escaped = query.replace('%', "").replace('_', "");
-    let like = format!("%{escaped}%");
+    // Busca por termos: "santa polished" exige as duas palavras em algum lugar
+    // (título, corpo, tags ou caminho), em qualquer ordem.
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(|term| term.replace('%', "").replace('_', ""))
+        .filter(|term| !term.is_empty())
+        .take(8)
+        .collect();
 
-    let mut stmt = conn.prepare(
+    let mut sql = String::from(
         "SELECT file_path, kind, title, project, tags, substr(COALESCE(content, ''), 1, 240)
            FROM memory_index
-          WHERE (?1 IS NULL OR project = ?1)
-            AND (?2 = '' OR title LIKE ?3 OR COALESCE(content, '') LIKE ?3 OR tags LIKE ?3)
-          ORDER BY updated_at DESC
-          LIMIT ?4",
-    )?;
+          WHERE (?1 IS NULL OR project = ?1)",
+    );
+    for index in 0..terms.len() {
+        sql.push_str(&format!(
+            " AND (title LIKE ?{0} OR COALESCE(content, '') LIKE ?{0} OR tags LIKE ?{0} OR file_path LIKE ?{0})",
+            index + 2
+        ));
+    }
+    sql.push_str(" ORDER BY updated_at DESC LIMIT ?");
+    sql.push_str(&(terms.len() + 2).to_string());
 
-    let rows = stmt.query_map(
-        params![project, query, like, (limit.max(1) * 3) as i64],
-        |row| {
-            let tags: String = row.get(4)?;
-            Ok(MemoryHit {
-                file_path: row.get(0)?,
-                kind: row.get(1)?,
-                title: row.get(2)?,
-                project: row.get(3)?,
-                tags: serde_json::from_str(&tags).unwrap_or_default(),
-                snippet: row.get(5)?,
-            })
-        },
-    )?;
+    let mut values: Vec<Value> = Vec::with_capacity(terms.len() + 2);
+    values.push(match project {
+        Some(project) => Value::Text(project.to_string()),
+        None => Value::Null,
+    });
+    for term in &terms {
+        values.push(Value::Text(format!("%{term}%")));
+    }
+    values.push(Value::Integer((limit.max(1) * 3) as i64));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(values), |row| {
+        let tags: String = row.get(4)?;
+        Ok(MemoryHit {
+            file_path: row.get(0)?,
+            kind: row.get(1)?,
+            title: row.get(2)?,
+            project: row.get(3)?,
+            tags: serde_json::from_str(&tags).unwrap_or_default(),
+            snippet: row.get(5)?,
+        })
+    })?;
 
     let mut out = Vec::new();
     for row in rows {

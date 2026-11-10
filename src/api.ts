@@ -62,6 +62,8 @@ export const api = {
   listInstalledApps: () => invoke<AppEntry[]>("list_installed_apps"),
   launchApp: (exePath: string) => invoke<void>("launch_app", { exePath }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
+  setNativeDialogOpen: (open: boolean) =>
+    invoke<void>("set_native_dialog_open", { open }),
   rebuildAppsIndex: () => invoke<number>("rebuild_apps_index"),
   rebuildFilesIndex: () => invoke<void>("rebuild_files_index"),
 
@@ -98,6 +100,10 @@ export const api = {
   listProjects: () => invoke<ProjectInfo[]>("list_projects"),
   createProject: (slug: string, title: string) =>
     invoke<ProjectInfo>("create_project", { slug, title }),
+  linkProject: (root: string, title: string | null = null) =>
+    invoke<ProjectInfo>("link_project", { root, title }),
+  unlinkProject: (slug: string) =>
+    invoke<void>("unlink_project", { slug }),
   listMemoryFiles: (project: string | null) =>
     invoke<MemoryFile[]>("list_memory_files", { project }),
   readNote: (path: string) => invoke<NoteDetail>("read_note", { path }),

@@ -419,6 +419,11 @@ pub fn open_path(path: String) -> AppResult<()> {
 }
 
 #[tauri::command]
+pub fn set_native_dialog_open(open: bool) {
+    crate::state::NATIVE_DIALOG_OPEN.store(open, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tauri::command]
 pub fn copy_text(text: String) -> AppResult<()> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| AppError::Platform(e.to_string()))?;
     clipboard

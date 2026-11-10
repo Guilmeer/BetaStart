@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { Graph } from "./Graph";
+import { MarkdownInline, MarkdownView } from "./Markdown";
 import type {
   MemoryFile,
   MemoryHit,
@@ -37,10 +40,91 @@ function formatEpoch(timestamp: number | null): string {
   return new Date(timestamp * 1000).toLocaleString();
 }
 
+function formatIsoDisplay(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+}
+
 function kindIcon(kind: string): string {
   if (kind === "task") return "☑";
   if (kind === "project") return "▣";
   return "▤";
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function joinPath(base: string, child: string): string {
+  return `${normalizePath(base).replace(/\/+$/, "")}/${child}`;
+}
+
+function relativeToRoot(path: string, root: string | null | undefined): string {
+  if (!root) return normalizePath(path);
+  const value = normalizePath(path);
+  const base = normalizePath(root).replace(/\/+$/, "");
+  if (value.toLowerCase().startsWith(`${base.toLowerCase()}/`)) {
+    return value.slice(base.length + 1);
+  }
+  return value;
+}
+
+function folderOf(path: string): string {
+  const normalized = normalizePath(path);
+  const index = normalized.lastIndexOf("/");
+  return index > 0 ? normalized.slice(0, index) : "";
+}
+
+function folderLabel(folder: string): string {
+  if (folder === ".betastart") return "Beta Start";
+  if (folder.startsWith(".betastart/")) {
+    return `Beta Start/${folder.slice(".betastart/".length)}`;
+  }
+  return folder;
+}
+
+function sameFilePath(left: string, right: string): boolean {
+  return normalizePath(left).toLowerCase() === normalizePath(right).toLowerCase();
+}
+
+function resolveRelativePath(filePath: string, href: string): string {
+  let target = href.split("#")[0].split("?")[0].trim();
+  try {
+    target = decodeURI(target);
+  } catch {
+    // mantém o valor original se o percent-encoding for inválido
+  }
+  const fileUrl = target.match(/^file:\/\/\/(.*)$/i);
+  if (fileUrl) target = fileUrl[1];
+  if (!target) return filePath;
+  if (/^[a-zA-Z]:[\\/]/.test(target) || target.startsWith("/") || target.startsWith("\\")) {
+    return target;
+  }
+
+  const separator = filePath.includes("\\") ? "\\" : "/";
+  const base = filePath.slice(0, filePath.lastIndexOf(separator) + 1);
+  const combined = `${base}${target}`;
+  const normalizedSeparator = combined.includes("\\") ? "\\" : "/";
+  const parts = combined
+    .replace(/[\\/]/g, normalizedSeparator)
+    .split(normalizedSeparator);
+  const resolved: string[] = [];
+
+  for (const part of parts) {
+    if (part === "" && resolved.length === 0) {
+      resolved.push(part);
+      continue;
+    }
+    if (part === ".") continue;
+    if (part === "..") {
+      if (resolved.length > 1) resolved.pop();
+      continue;
+    }
+    resolved.push(part);
+  }
+
+  return resolved.join(normalizedSeparator);
 }
 
 export function Memory({ onBack }: { onBack: () => void }) {
@@ -50,10 +134,14 @@ export function Memory({ onBack }: { onBack: () => void }) {
   const [selectedProject, setSelectedProject] = useState("all");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
+  const [noteDirty, setNoteDirty] = useState(false);
+  const [workspacePath, setWorkspacePath] = useState("");
   const [search, setSearch] = useState("");
   const [searchHits, setSearchHits] = useState<MemoryHit[] | null>(null);
   const [view, setView] = useState<"list" | "kanban">("list");
   const [rightPanel, setRightPanel] = useState<"tasks" | "graph">("tasks");
+  const [editorMode, setEditorMode] = useState<"read" | "edit">("read");
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [graphVersion, setGraphVersion] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,14 +157,16 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [projs, fs, ts] = await Promise.all([
+      const [projs, fs, ts, paths] = await Promise.all([
         api.listProjects(),
         api.listMemoryFiles(projectFilter),
         api.listTasks(projectFilter, null, null),
+        api.getPaths(),
       ]);
       setProjects(projs);
       setFiles(fs);
       setTasks(ts);
+      setWorkspacePath(paths.workspace);
       setGraphVersion((value) => value + 1);
     } catch (error) {
       setMessage(String(error));
@@ -124,13 +214,105 @@ export function Memory({ onBack }: { onBack: () => void }) {
       const detail = await api.readNote(path);
       setSelectedPath(path);
       setNote(detail);
+      setNoteDirty(false);
+      setEditorMode("read");
     } catch (error) {
       setMessage(String(error));
     }
   }, []);
 
-  const updateNote = (patch: Partial<NoteDetail>) =>
+  const resolveWikiLink = useCallback(
+    (label: string) => {
+      const target = label.trim().toLowerCase();
+      if (!target) return null;
+      const fromNote = note?.links.find(
+        (link) => link.label.trim().toLowerCase() === target,
+      );
+      if (fromNote?.path) return fromNote.path;
+      const file = files.find((item) => {
+        const title = item.title.trim().toLowerCase();
+        const name = item.name.replace(/\.md$/i, "").trim().toLowerCase();
+        return title === target || name === target;
+      });
+      return file?.path ?? null;
+    },
+    [note, files],
+  );
+
+  const openWikiLink = useCallback(
+    (label: string, path: string | null) => {
+      if (path) {
+        void openFile(path);
+        return;
+      }
+      setMessage(`O link "${label}" ainda não aponta para um arquivo.`);
+    },
+    [openFile],
+  );
+
+  const openLink = useCallback(
+    (url: string) => {
+      if (url.startsWith("#")) return;
+      if (/^(https?:|mailto:|tel:)/i.test(url)) {
+        void api.openPath(url).catch((error) => setMessage(String(error)));
+        return;
+      }
+      if (!note) return;
+      const target = resolveRelativePath(note.path, url);
+      const known = files.find((file) => sameFilePath(file.path, target));
+      if (known) {
+        void openFile(known.path);
+        return;
+      }
+      void api.openPath(target).catch((error) => setMessage(String(error)));
+    },
+    [note, files, openFile],
+  );
+
+  useEffect(() => {
+    setExpandedTasks(new Set());
+  }, [selectedProject]);
+
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+    const unlistenPromise = listen("memory-changed", () => {
+      if (!active) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void refresh().then(async () => {
+          if (!active || !selectedPath) return;
+          if (noteDirty) {
+            setMessage(
+              "O arquivo mudou fora do Beta Start. Salve suas alterações ou reabra a nota.",
+            );
+            return;
+          }
+          try {
+            const detail = await api.readNote(selectedPath);
+            if (active) setNote(detail);
+          } catch {
+            if (active) {
+              setNote(null);
+              setSelectedPath(null);
+              setMessage("A nota aberta não está mais disponível.");
+            }
+          }
+        });
+      }, 250);
+    });
+
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [refresh, selectedPath, noteDirty]);
+
+  const updateNote = (patch: Partial<NoteDetail>) => {
     setNote((current) => (current ? { ...current, ...patch } : current));
+    setNoteDirty(true);
+  };
 
   const saveNote = useCallback(async () => {
     if (!note) return;
@@ -153,6 +335,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
       }
       await refresh();
       setNote(await api.readNote(note.path));
+      setNoteDirty(false);
       setMessage("Salvo.");
     } catch (error) {
       setMessage(String(error));
@@ -167,6 +350,8 @@ export function Memory({ onBack }: { onBack: () => void }) {
       const created = await api.createNote(projectFilter, "Nova nota");
       setSelectedPath(created.path);
       setNote(created);
+      setNoteDirty(false);
+      setEditorMode("edit");
       await refresh();
     } catch (error) {
       setMessage(String(error));
@@ -177,11 +362,19 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
   const deleteNote = useCallback(async () => {
     if (!note) return;
+    if (
+      !window.confirm(
+        `Excluir "${note.title}"?\n\nO arquivo será removido do disco.`,
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       await api.deleteMemoryFile(note.path);
       setNote(null);
       setSelectedPath(null);
+      setNoteDirty(false);
       await refresh();
     } catch (error) {
       setMessage(String(error));
@@ -204,6 +397,57 @@ export function Memory({ onBack }: { onBack: () => void }) {
       setBusy(false);
     }
   }, [newProject, refresh]);
+
+  const linkFolder = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api.setNativeDialogOpen(true);
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Selecionar pasta do projeto",
+      });
+      if (!selected || Array.isArray(selected)) return;
+      setMessage("Indexando pasta…");
+      const project = await api.linkProject(selected);
+      await refresh();
+      setSelectedProject(project.slug);
+      const indexed = (await api.listMemoryFiles(project.slug)).filter(
+        (file) => file.kind !== "project",
+      );
+      setMessage(
+        `Pasta vinculada como projeto "${project.title}" — ${indexed.length} arquivo(s) .md indexado(s).`,
+      );
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      await api.setNativeDialogOpen(false).catch(() => {});
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  const unlinkSelectedProject = useCallback(async () => {
+    const project = projects.find((item) => item.slug === selectedProject);
+    if (!project || project.mode !== "linked") return;
+    const confirmed = window.confirm(
+      `Desvincular "${project.title}"?\n\nOs arquivos da pasta não serão apagados.`,
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await api.unlinkProject(project.slug);
+      setSelectedProject("all");
+      setNote(null);
+      setSelectedPath(null);
+      setNoteDirty(false);
+      await refresh();
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [projects, selectedProject, refresh]);
 
   const createTask = useCallback(async () => {
     const title = taskTitle.trim();
@@ -259,12 +503,16 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
   const removeTask = useCallback(
     async (task: Task) => {
+      if (!window.confirm(`Excluir a task "${task.title}"?\n\nO arquivo será removido do disco.`)) {
+        return;
+      }
       setBusy(true);
       try {
         await api.deleteTask(task.id);
         if (selectedPath === task.filePath) {
           setNote(null);
           setSelectedPath(null);
+          setNoteDirty(false);
         }
         await refresh();
       } catch (error) {
@@ -279,49 +527,154 @@ export function Memory({ onBack }: { onBack: () => void }) {
   const grouped = useMemo(() => {
     const map: Record<string, MemoryFile[]> = {};
     for (const file of files) {
+      const normalized = normalizePath(file.path).toLowerCase();
+      if (file.kind === "project" && normalized.includes("/.betastart/")) {
+        continue;
+      }
       (map[file.project] ??= []).push(file);
     }
     return map;
   }, [files]);
 
-  const roots = useMemo(() => tasks.filter((task) => !task.parentId), [tasks]);
-  const childrenOf = (id: string) => tasks.filter((task) => task.parentId === id);
-
-  const renderTask = (task: Task) => (
-    <div className={`task-card ${task.status === "done" ? "done" : ""}`} key={task.id}>
-      <div className="task-card-head">
-        <strong onClick={() => void openFile(task.filePath)}>{task.title}</strong>
-        <span className={`prio prio-${task.priority}`}>
-          {PRIORITY_LABEL[task.priority] ?? task.priority}
-        </span>
-      </div>
-      {(task.due || task.tags.length > 0) && (
-        <div className="task-meta">
-          {task.due && <span>⏰ {formatEpoch(task.due)}</span>}
-          {task.tags.map((tag) => (
-            <span className="tag" key={tag}>
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="task-actions">
-        {STATUSES.map((status) => (
-          <button
-            key={status}
-            className={task.status === status ? "active" : ""}
-            disabled={busy}
-            onClick={() => void setStatus(task, status)}
-          >
-            {STATUS_LABEL[status]}
-          </button>
-        ))}
-        <button disabled={busy} onClick={() => void removeTask(task)}>
-          ×
-        </button>
-      </div>
-    </div>
+  const selectedProjectInfo = useMemo(
+    () => projects.find((project) => project.slug === selectedProject) ?? null,
+    [projects, selectedProject],
   );
+  const selectedLinkedProject =
+    selectedProjectInfo?.mode === "linked" ? selectedProjectInfo : null;
+
+  const projectRoots = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const project of projects) {
+      if (project.rootPath) map[project.slug] = project.rootPath;
+    }
+    if (workspacePath) map.global = joinPath(workspacePath, "global");
+    return map;
+  }, [projects, workspacePath]);
+
+  const projectTitle = useCallback(
+    (slug: string) => {
+      if (slug === "global") return "Global";
+      return projects.find((project) => project.slug === slug)?.title ?? slug;
+    },
+    [projects],
+  );
+
+  const fileTree = useMemo(() => {
+    const result: Record<
+      string,
+      { folder: string; files: { file: MemoryFile; rel: string }[] }[]
+    > = {};
+    for (const [project, list] of Object.entries(grouped)) {
+      const folders = new Map<string, { file: MemoryFile; rel: string }[]>();
+      for (const file of list) {
+        const rel = relativeToRoot(file.path, projectRoots[project]);
+        const folder = folderOf(rel);
+        const bucket = folders.get(folder) ?? [];
+        bucket.push({ file, rel });
+        folders.set(folder, bucket);
+      }
+      result[project] = [...folders.entries()]
+        .sort(([left], [right]) => {
+          if (left === "") return -1;
+          if (right === "") return 1;
+          return left.localeCompare(right);
+        })
+        .map(([folder, entries]) => ({
+          folder,
+          files: entries.sort((left, right) => left.rel.localeCompare(right.rel)),
+        }));
+    }
+    return result;
+  }, [grouped, projectRoots]);
+
+  const roots = useMemo(() => tasks.filter((task) => !task.parentId), [tasks]);
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const task of tasks) {
+      if (!task.parentId) continue;
+      const list = map.get(task.parentId) ?? [];
+      list.push(task);
+      map.set(task.parentId, list);
+    }
+    return map;
+  }, [tasks]);
+
+  const toggleTask = useCallback((id: string) => {
+    setExpandedTasks((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const renderTask = (task: Task) => {
+    const children = childrenByParent.get(task.id) ?? [];
+    const isOpen = expandedTasks.has(task.id);
+    const hasChildren = children.length > 0;
+    return (
+      <div className="task-node" key={task.id}>
+        <div
+          className={`task-card ${task.status === "done" ? "done" : ""} ${hasChildren ? "has-children" : ""}`}
+        >
+          <div className="task-card-head">
+            <strong onClick={() => void openFile(task.filePath)}>{task.title}</strong>
+            <span className={`prio prio-${task.priority}`}>
+              {PRIORITY_LABEL[task.priority] ?? task.priority}
+            </span>
+          </div>
+          {(task.due || task.tags.length > 0) && (
+            <div className="task-meta">
+              {task.due && <span>⏰ {formatEpoch(task.due)}</span>}
+              {task.tags.map((tag) => (
+                <span className="tag" key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="task-footer">
+            <div className="task-actions">
+              {STATUSES.map((status) => (
+                <button
+                  key={status}
+                  className={task.status === status ? "active" : ""}
+                  disabled={busy}
+                  onClick={() => void setStatus(task, status)}
+                >
+                  {STATUS_LABEL[status]}
+                </button>
+              ))}
+              <button disabled={busy} onClick={() => void removeTask(task)}>
+                ×
+              </button>
+            </div>
+            {hasChildren && (
+              <button
+                type="button"
+                className={`task-expand ${isOpen ? "open" : ""}`}
+                title={isOpen ? "Retrair subtasks" : `Mostrar ${children.length} subtask(s)`}
+                aria-expanded={isOpen}
+                onClick={() => toggleTask(task.id)}
+              >
+                <span className="task-expand-chevron">{isOpen ? "▾" : "▸"}</span>
+                {children.length}
+              </button>
+            )}
+          </div>
+        </div>
+        {hasChildren && isOpen && (
+          <div className="subtask-list">
+            {children.map((child) => renderTask(child))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <section className="memory">
@@ -368,10 +721,14 @@ export function Memory({ onBack }: { onBack: () => void }) {
             {projects.map((project) => (
               <button
                 key={project.slug}
-                className={selectedProject === project.slug ? "active" : ""}
+                className={`${selectedProject === project.slug ? "active" : ""} ${project.available ? "" : "unavailable"}`}
+                title={project.rootPath ?? undefined}
                 onClick={() => setSelectedProject(project.slug)}
               >
-                {project.title}
+                <span className="mem-project-name">{project.title}</span>
+                {project.mode === "linked" && (
+                  <span className="mem-project-badge">pasta</span>
+                )}
               </button>
             ))}
             <div className="inline">
@@ -396,42 +753,93 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 Criar
               </button>
             </div>
+            <button
+              className="secondary mem-link-btn"
+              disabled={busy}
+              title="Indexar uma pasta existente sem mover os arquivos"
+              onClick={() => void linkFolder()}
+            >
+              Vincular pasta…
+            </button>
+            {selectedLinkedProject && (
+              <div className="mem-project-actions">
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    if (selectedLinkedProject.rootPath) {
+                      void api
+                        .openPath(selectedLinkedProject.rootPath)
+                        .catch((error) => setMessage(String(error)));
+                    }
+                  }}
+                >
+                  Abrir pasta
+                </button>
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => void unlinkSelectedProject()}
+                >
+                  Desvincular
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="mem-files">
             <h2>{searchHits ? "Busca" : "Arquivos"}</h2>
             {searchHits ? (
-              searchHits.map((hit) => (
-                <button
-                  key={hit.filePath}
-                  className="mem-file"
-                  onClick={() => void openFile(hit.filePath)}
-                >
-                  <span className={`kind kind-${hit.kind}`}>{kindIcon(hit.kind)}</span>
-                  <span className="mem-file-text">
-                    <strong>{hit.title}</strong>
-                    <small>
-                      {hit.project} · {hit.kind}
-                    </small>
-                  </span>
-                </button>
-              ))
+              searchHits.map((hit) => {
+                const rel = relativeToRoot(
+                  hit.filePath,
+                  projectRoots[hit.project],
+                );
+                return (
+                  <button
+                    key={hit.filePath}
+                    className="mem-file"
+                    title={rel}
+                    onClick={() => void openFile(hit.filePath)}
+                  >
+                    <span className={`kind kind-${hit.kind}`}>{kindIcon(hit.kind)}</span>
+                    <span className="mem-file-text">
+                      <strong>{hit.title}</strong>
+                      <small>
+                        {projectTitle(hit.project)} · {rel}
+                      </small>
+                    </span>
+                  </button>
+                );
+              })
+            ) : Object.keys(fileTree).length === 0 ? (
+              <div className="mem-empty-small">Nenhum arquivo .md encontrado.</div>
             ) : (
-              Object.entries(grouped).map(([project, list]) => (
+              Object.entries(fileTree).map(([project, folders]) => (
                 <div key={project}>
-                  <div className="mem-group">{project === "global" ? "Global" : project}</div>
-                  {list.map((file) => (
-                    <button
-                      key={file.path}
-                      className={`mem-file ${selectedPath === file.path ? "active" : ""}`}
-                      onClick={() => void openFile(file.path)}
-                    >
-                      <span className={`kind kind-${file.kind}`}>{kindIcon(file.kind)}</span>
-                      <span className="mem-file-text">
-                        <strong>{file.title}</strong>
-                        <small>{file.kind}</small>
-                      </span>
-                    </button>
+                  <div className="mem-group">{projectTitle(project)}</div>
+                  {folders.map((group) => (
+                    <div className="mem-folder-block" key={group.folder || "__root"}>
+                      {group.folder && (
+                        <div className="mem-folder" title={group.folder}>
+                          {folderLabel(group.folder)}
+                        </div>
+                      )}
+                      {group.files.map(({ file, rel }) => (
+                        <button
+                          key={file.path}
+                          className={`mem-file ${selectedPath === file.path ? "active" : ""}`}
+                          title={rel}
+                          onClick={() => void openFile(file.path)}
+                        >
+                          <span className={`kind kind-${file.kind}`}>{kindIcon(file.kind)}</span>
+                          <span className="mem-file-text">
+                            <strong>{file.title}</strong>
+                            <small>{file.kind}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               ))
@@ -443,15 +851,42 @@ export function Memory({ onBack }: { onBack: () => void }) {
           {note ? (
             <>
               <div className="mem-editor-head">
-                <input
-                  className="note-title"
-                  value={note.title}
-                  onChange={(event) => updateNote({ title: event.target.value })}
-                />
+                {editorMode === "edit" ? (
+                  <input
+                    className="note-title"
+                    value={note.title}
+                    onChange={(event) => updateNote({ title: event.target.value })}
+                  />
+                ) : (
+                  <h1 className="note-title-read">
+                    <MarkdownInline
+                      text={note.title || "Sem título"}
+                      resolveWikiLink={resolveWikiLink}
+                      onOpenWikiLink={openWikiLink}
+                      onOpenUrl={openLink}
+                    />
+                  </h1>
+                )}
                 <div className="mem-editor-actions">
-                  <button className="primary" disabled={busy} onClick={() => void saveNote()}>
-                    Salvar
-                  </button>
+                  <div className="segmented">
+                    <button
+                      className={editorMode === "read" ? "active" : ""}
+                      onClick={() => setEditorMode("read")}
+                    >
+                      Ler
+                    </button>
+                    <button
+                      className={editorMode === "edit" ? "active" : ""}
+                      onClick={() => setEditorMode("edit")}
+                    >
+                      Editar
+                    </button>
+                  </div>
+                  {editorMode === "edit" && (
+                    <button className="primary" disabled={busy} onClick={() => void saveNote()}>
+                      Salvar
+                    </button>
+                  )}
                   <button className="secondary" disabled={busy} onClick={() => void deleteNote()}>
                     Excluir
                   </button>
@@ -475,9 +910,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                           ? `Abrir ${link.label}`
                           : `Destino "${link.label}" não encontrado`
                       }
-                      onClick={() => {
-                        if (link.path) void openFile(link.path);
-                      }}
+                      onClick={() => openWikiLink(link.label, link.path)}
                     >
                       [[{link.label}]]
                     </button>
@@ -485,67 +918,107 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 </div>
               )}
 
-              {note.kind === "task" && (
-                <div className="task-fields">
-                  <select
-                    className="text-input"
-                    value={note.status ?? "todo"}
-                    onChange={(event) => updateNote({ status: event.target.value })}
-                  >
-                    {STATUSES.map((status) => (
-                      <option key={status} value={status}>
-                        {STATUS_LABEL[status]}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="text-input"
-                    value={note.priority ?? "medium"}
-                    onChange={(event) => updateNote({ priority: event.target.value })}
-                  >
-                    {Object.entries(PRIORITY_LABEL).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
+              {editorMode === "edit" ? (
+                <>
+                  {note.kind === "task" && (
+                    <div className="task-fields">
+                      <select
+                        className="text-input"
+                        value={note.status ?? "todo"}
+                        onChange={(event) => updateNote({ status: event.target.value })}
+                      >
+                        {STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {STATUS_LABEL[status]}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="text-input"
+                        value={note.priority ?? "medium"}
+                        onChange={(event) => updateNote({ priority: event.target.value })}
+                      >
+                        {Object.entries(PRIORITY_LABEL).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="text-input"
+                        type="datetime-local"
+                        title="Data de vencimento"
+                        value={toLocalInput(note.due)}
+                        onChange={(event) => updateNote({ due: event.target.value })}
+                      />
+                      <input
+                        className="text-input"
+                        type="datetime-local"
+                        title="Lembrete"
+                        value={toLocalInput(note.remind)}
+                        onChange={(event) => updateNote({ remind: event.target.value })}
+                      />
+                    </div>
+                  )}
+
                   <input
                     className="text-input"
-                    type="datetime-local"
-                    title="Data de vencimento"
-                    value={toLocalInput(note.due)}
-                    onChange={(event) => updateNote({ due: event.target.value })}
+                    placeholder="tags, separadas por vírgula"
+                    value={note.tags.join(", ")}
+                    onChange={(event) =>
+                      updateNote({
+                        tags: event.target.value
+                          .split(",")
+                          .map((tag) => tag.trim())
+                          .filter(Boolean),
+                      })
+                    }
                   />
-                  <input
-                    className="text-input"
-                    type="datetime-local"
-                    title="Lembrete"
-                    value={toLocalInput(note.remind)}
-                    onChange={(event) => updateNote({ remind: event.target.value })}
+
+                  <textarea
+                    className="note-body"
+                    value={note.body}
+                    onChange={(event) => updateNote({ body: event.target.value })}
+                    placeholder="Escreva aqui… use # títulos, **negrito**, listas, [[Nome da nota]] e links"
                   />
-                </div>
+                </>
+              ) : (
+                <>
+                  {note.kind === "task" && (
+                    <div className="task-facts">
+                      <span className={`kind-badge status-${note.status ?? "todo"}`}>
+                        {STATUS_LABEL[note.status ?? "todo"] ?? note.status}
+                      </span>
+                      <span className={`kind-badge prio-${note.priority ?? "medium"}`}>
+                        {PRIORITY_LABEL[note.priority ?? "medium"] ?? note.priority}
+                      </span>
+                      {note.due && (
+                        <span className="kind-badge">Vence {formatIsoDisplay(note.due)}</span>
+                      )}
+                      {note.remind && (
+                        <span className="kind-badge">Lembrete {formatIsoDisplay(note.remind)}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {note.tags.length > 0 && (
+                    <div className="note-tags">
+                      {note.tags.map((tag) => (
+                        <span className="tag" key={tag}>
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <MarkdownView
+                    source={note.body}
+                    resolveWikiLink={resolveWikiLink}
+                    onOpenWikiLink={openWikiLink}
+                    onOpenUrl={openLink}
+                  />
+                </>
               )}
-
-              <input
-                className="text-input"
-                placeholder="tags, separadas por vírgula"
-                value={note.tags.join(", ")}
-                onChange={(event) =>
-                  updateNote({
-                    tags: event.target.value
-                      .split(",")
-                      .map((tag) => tag.trim())
-                      .filter(Boolean),
-                  })
-                }
-              />
-
-              <textarea
-                className="note-body"
-                value={note.body}
-                onChange={(event) => updateNote({ body: event.target.value })}
-                placeholder="Escreva aqui… use [[Nome da nota]] para criar links"
-              />
             </>
           ) : (
             <div className="mem-empty">Selecione um arquivo ou crie uma nota.</div>
@@ -589,8 +1062,8 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
           {rightPanel === "graph" ? (
             <Graph
-              key={graphVersion}
               project={projectFilter}
+              version={graphVersion}
               onOpen={(path) => void openFile(path)}
             />
           ) : (
@@ -664,16 +1137,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 return (
                   <div className="task-group" key={status}>
                     <div className="task-group-title">{STATUS_LABEL[status]}</div>
-                    {list.map((task) => (
-                      <div key={task.id}>
-                        {renderTask(task)}
-                        {childrenOf(task.id).map((child) => (
-                          <div className="subtask" key={child.id}>
-                            {renderTask(child)}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
+                    {list.map((task) => renderTask(task))}
                   </div>
                 );
               })}

@@ -86,10 +86,11 @@ pub fn verify_token(conn: &Connection, token: &str) -> AppResult<Option<McpClien
     for row in rows {
         let (client, hash) = row?;
         if crate::mcp::auth::verify_token(token, &hash) {
-            conn.execute(
+            // Best-effort: o app pode estar com o banco em uso; não falhar o auth por isso.
+            let _ = conn.execute(
                 "UPDATE mcp_clients SET last_seen = ?2 WHERE id = ?1",
                 params![client.id, crate::db::now_secs()],
-            )?;
+            );
             return Ok(Some(client));
         }
     }
