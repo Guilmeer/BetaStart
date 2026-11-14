@@ -7,6 +7,7 @@ import type {
   Graph,
   HotkeyValidation,
   InstalledExtension,
+  McpAudit,
   McpClient,
   McpClientCreated,
   McpStatus,
@@ -68,10 +69,20 @@ export const api = {
   rebuildFilesIndex: () => invoke<void>("rebuild_files_index"),
 
   copyText: (text: string) => invoke<void>("copy_text", { text }),
+  copyClipboard: (id: number) => invoke<void>("copy_clipboard", { id }),
+  clipboardImage: (id: number) =>
+    invoke<string>("clipboard_image", { id }),
+  touchUsage: (kind: string, key: string) =>
+    invoke<void>("touch_usage", { kind, key }),
+  notify: (title: string, body: string) =>
+    invoke<void>("notify", { title, body }),
+  openExtensionLogs: () => invoke<void>("open_extension_logs"),
   listClipboard: (limit = 50) => invoke<ClipEntry[]>("list_clipboard", { limit }),
   deleteClipboard: (id: number) => invoke<void>("delete_clipboard", { id }),
   pinClipboard: (id: number, pinned: boolean) =>
     invoke<void>("pin_clipboard", { id, pinned }),
+  clearUnpinnedClipboard: () =>
+    invoke<number>("clear_unpinned_clipboard"),
 
   listExtensions: () => invoke<InstalledExtension[]>("list_extensions"),
   installExtension: (request: { kind: string; value: string }) =>
@@ -107,6 +118,8 @@ export const api = {
   listMemoryFiles: (project: string | null) =>
     invoke<MemoryFile[]>("list_memory_files", { project }),
   readNote: (path: string) => invoke<NoteDetail>("read_note", { path }),
+  getBacklinks: (path: string) =>
+    invoke<MemoryFile[]>("get_backlinks", { path }),
   saveNote: (path: string, title: string, tags: string[], body: string) =>
     invoke<NoteDetail>("save_note", { path, title, tags, body }),
   createNote: (project: string | null, title: string) =>
@@ -127,6 +140,7 @@ export const api = {
   mcpCreateClient: (name: string, scopes: string[]) =>
     invoke<McpClientCreated>("mcp_create_client", { name, scopes }),
   mcpListClients: () => invoke<McpClient[]>("mcp_list_clients"),
+  mcpAudit: (limit = 50) => invoke<McpAudit[]>("mcp_audit", { limit }),
   mcpRevokeClient: (id: number) =>
     invoke<void>("mcp_revoke_client", { id }),
   mcpExePath: () => invoke<string>("mcp_exe_path"),
@@ -173,6 +187,7 @@ export type {
   Graph,
   HotkeyValidation,
   InstalledExtension,
+  McpAudit,
   McpClient,
   McpClientCreated,
   McpStatus,

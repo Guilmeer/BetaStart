@@ -9,6 +9,7 @@ pub mod mcp;
 pub mod memory;
 pub mod schema;
 pub mod tasks;
+pub mod usage;
 pub mod windows;
 
 use std::path::Path;
@@ -28,6 +29,26 @@ pub fn open(path: &Path) -> AppResult<Connection> {
     conn.busy_timeout(Duration::from_secs(5))?;
     schema::init(&mut conn)?;
     Ok(conn)
+}
+
+/// Monta uma consulta FTS5 de prefixo segura a partir do texto do usuário.
+pub fn fts_query(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .take(8)
+        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" AND "))
+    }
+}
+
+/// Compacta o WAL no fechamento (evita `data.db-wal` crescendo sem limite).
+pub fn checkpoint(conn: &Connection) {
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
 }
 
 /// Timestamp atual em segundos (UTC).

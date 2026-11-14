@@ -1028,16 +1028,19 @@ fn extensions_run(ctx: &McpContext, args: &Value) -> Result<String, String> {
     .map_err(|e| e.to_string())?;
 
     if !outcome.ok {
-        return Err(outcome.error.unwrap_or_else(|| "extension failed".into()));
+        let hint = outcome
+            .log_path
+            .as_deref()
+            .map(|path| format!("\nLog: {path}"))
+            .unwrap_or_default();
+        return Err(format!(
+            "{}{hint}",
+            outcome.error.unwrap_or_else(|| "extension failed".into())
+        ));
     }
 
-    if let Some(toast) = outcome.toast {
-        return text_result(&RunResult {
-            kind: "message".into(),
-            text: Some(toast),
-        });
-    }
-
+    // `ui.toast` acompanha a ação; não substitui `copy`/`open`.
+    let toast = outcome.toast;
     let result = outcome.result;
     if let Some(object) = result.as_object() {
         match object.get("type").and_then(|value| value.as_str()) {
@@ -1057,6 +1060,7 @@ fn extensions_run(ctx: &McpContext, args: &Value) -> Result<String, String> {
                 return text_result(&RunResult {
                     kind: "copy".into(),
                     text: Some(text),
+                    toast,
                 });
             }
             Some("open") => {
@@ -1071,6 +1075,7 @@ fn extensions_run(ctx: &McpContext, args: &Value) -> Result<String, String> {
                 return text_result(&RunResult {
                     kind: "opened".into(),
                     text: None,
+                    toast,
                 });
             }
             Some("message") => {
@@ -1082,6 +1087,7 @@ fn extensions_run(ctx: &McpContext, args: &Value) -> Result<String, String> {
                 return text_result(&RunResult {
                     kind: "message".into(),
                     text: Some(text),
+                    toast: None,
                 });
             }
             _ => {}
@@ -1092,12 +1098,22 @@ fn extensions_run(ctx: &McpContext, args: &Value) -> Result<String, String> {
         return text_result(&RunResult {
             kind: "message".into(),
             text: Some(text.to_string()),
+            toast: None,
+        });
+    }
+
+    if let Some(toast) = toast {
+        return text_result(&RunResult {
+            kind: "message".into(),
+            text: Some(toast),
+            toast: None,
         });
     }
 
     text_result(&RunResult {
         kind: "done".into(),
         text: None,
+        toast: None,
     })
 }
 

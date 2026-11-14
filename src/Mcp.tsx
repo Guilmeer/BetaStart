@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import type { McpClient, McpClientCreated, McpStatus } from "./types";
+import type {
+  McpAudit,
+  McpClient,
+  McpClientCreated,
+  McpStatus,
+} from "./types";
 
 const SCOPES = [
   "memory",
@@ -23,6 +28,7 @@ const SCOPE_LABEL: Record<string, string> = {
 export function Mcp({ onBack }: { onBack: () => void }) {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [clients, setClients] = useState<McpClient[]>([]);
+  const [audit, setAudit] = useState<McpAudit[]>([]);
   const [exePath, setExePath] = useState("");
   const [logPath, setLogPath] = useState("");
   const [name, setName] = useState("");
@@ -33,14 +39,16 @@ export function Mcp({ onBack }: { onBack: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [serverStatus, list, exe, paths] = await Promise.all([
+      const [serverStatus, list, exe, paths, recent] = await Promise.all([
         api.mcpStatus(),
         api.mcpListClients(),
         api.mcpExePath(),
         api.getPaths(),
+        api.mcpAudit(40),
       ]);
       setStatus(serverStatus);
       setClients(list);
+      setAudit(recent);
       setExePath(exe);
       const separatorIndex = Math.max(
         paths.config.lastIndexOf("\\"),
@@ -137,9 +145,14 @@ export function Mcp({ onBack }: { onBack: () => void }) {
     <section className="mcp">
       <div className="ext-header">
         <h1>MCP</h1>
-        <button className="secondary" onClick={onBack}>
-          Voltar
-        </button>
+        <div className="inline">
+          <button className="secondary" onClick={() => void refresh()}>
+            Atualizar
+          </button>
+          <button className="secondary" onClick={onBack}>
+            Voltar
+          </button>
+        </div>
       </div>
 
       <div className="ext-card">
@@ -271,6 +284,30 @@ export function Mcp({ onBack }: { onBack: () => void }) {
                 Revogar
               </button>
             )}
+          </div>
+        </div>
+      ))}
+
+      <h2>Últimas chamadas</h2>
+      {audit.length === 0 && (
+        <p className="field-hint">Nenhuma chamada registrada ainda.</p>
+      )}
+      {audit.map((entry) => (
+        <div className="ext-card" key={entry.id}>
+          <div className="ext-card-row">
+            <div>
+              <strong>{entry.tool}</strong>{" "}
+              <span className={entry.ok ? "ok" : "warn"}>
+                {entry.ok ? "ok" : "erro"}
+              </span>
+              <div className="field-hint">
+                {entry.clientName} ·{" "}
+                {new Date(entry.createdAt * 1000).toLocaleString()}
+              </div>
+              {entry.detail && (
+                <div className="field-hint">{entry.detail}</div>
+              )}
+            </div>
           </div>
         </div>
       ))}

@@ -48,6 +48,19 @@ pub fn extensions_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
+/// Diretório de dados do app sem depender do `AppHandle`
+/// (mesmo caminho usado por threads e processos auxiliares).
+pub fn data_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.betastart.app")
+}
+
+/// Logs persistentes das execuções de extensões.
+pub fn extension_logs_dir() -> PathBuf {
+    data_dir().join("extension-logs")
+}
+
 /// Pasta do runtime (assets do runner + Deno gerenciado).
 pub fn runtime_dir() -> PathBuf {
     dirs::data_local_dir()

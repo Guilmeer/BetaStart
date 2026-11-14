@@ -75,7 +75,45 @@ pub fn search(
     tags: &[String],
     limit: usize,
 ) -> AppResult<Vec<MemoryHit>> {
-    // Busca por termos: "santa polished" exige as duas palavras em algum lugar
+    // FTS5: prefixo + ranking por relevância (título pesa mais que o corpo).
+    if let Some(fts) = crate::db::fts_query(query) {
+        let result = (|| -> AppResult<Vec<MemoryHit>> {
+            let mut stmt = conn.prepare(
+                "SELECT m.file_path, m.kind, m.title, m.project, m.tags,
+                        substr(COALESCE(m.content, ''), 1, 240)
+                   FROM memory_fts
+                   JOIN memory_index m ON m.id = memory_fts.rowid
+                  WHERE memory_fts MATCH ?1
+                    AND (?2 IS NULL OR m.project = ?2)
+                  ORDER BY bm25(memory_fts, 10.0, 1.0, 5.0), m.updated_at DESC
+                  LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![fts, project, (limit.max(1) * 3) as i64], |row| {
+                let tags: String = row.get(4)?;
+                Ok(MemoryHit {
+                    file_path: row.get(0)?,
+                    kind: row.get(1)?,
+                    title: row.get(2)?,
+                    project: row.get(3)?,
+                    tags: serde_json::from_str(&tags).unwrap_or_default(),
+                    snippet: row.get(5)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })();
+        if let Ok(items) = result {
+            if !items.is_empty() {
+                return Ok(filter_memory_tags(items, tags, limit));
+            }
+        }
+    }
+
+    // Fallback: busca por substring (cobre termos que não são prefixo).
+    // "santa polished" exige as duas palavras em algum lugar
     // (título, corpo, tags ou caminho), em qualquer ordem.
     let terms: Vec<String> = query
         .split_whitespace()
@@ -121,20 +159,22 @@ pub fn search(
         })
     })?;
 
-    let mut out = Vec::new();
+    let mut items = Vec::new();
     for row in rows {
-        let hit = row?;
-        let matches_tags = tags
-            .iter()
-            .all(|tag| hit.tags.iter().any(|item| item.eq_ignore_ascii_case(tag)));
-        if matches_tags {
-            out.push(hit);
-            if out.len() >= limit {
-                break;
-            }
-        }
+        items.push(row?);
     }
-    Ok(out)
+    Ok(filter_memory_tags(items, tags, limit))
+}
+
+fn filter_memory_tags(items: Vec<MemoryHit>, tags: &[String], limit: usize) -> Vec<MemoryHit> {
+    items
+        .into_iter()
+        .filter(|hit| {
+            tags.iter()
+                .all(|tag| hit.tags.iter().any(|item| item.eq_ignore_ascii_case(tag)))
+        })
+        .take(limit)
+        .collect()
 }
 
 #[allow(dead_code)]

@@ -545,6 +545,7 @@ export function Graph({
                     <text
                       x={radius + 6}
                       y={4}
+                      className="graph-node-label"
                       // Fonte em unidades do grafo: o zoom aumenta o texto.
                       fontSize={active ? 13 : 12}
                       fontWeight={active || node.kind === "project" ? 600 : 400}

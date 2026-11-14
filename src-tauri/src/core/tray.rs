@@ -24,7 +24,14 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     }
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                if let Some(state) = app.try_state::<crate::state::AppState>() {
+                    if let Ok(conn) = state.db.lock() {
+                        crate::db::checkpoint(&conn);
+                    }
+                }
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

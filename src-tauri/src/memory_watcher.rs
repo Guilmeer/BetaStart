@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::RecvTimeoutError;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use notify::{EventKind, RecursiveMode, Watcher};
 use tauri::{Emitter, Manager};
@@ -35,9 +35,12 @@ pub fn start(
         };
 
         let mut watched: Vec<PathBuf> = Vec::new();
-        let (mut workspace, mut linked) = scope(&config_path)
-            .unwrap_or_else(|| (initial_workspace.clone(), Vec::new()));
+        let (mut workspace, mut linked) =
+            scope(&config_path).unwrap_or_else(|| (initial_workspace.clone(), Vec::new()));
         sync_watches(&mut watcher, &mut watched, &workspace, &linked);
+        // O config.json é lido só quando muda; antes, cada volta do loop de 2s
+        // abria o arquivo segurando o mutex de configuração.
+        let mut config_mtime = modified(&config_path);
 
         loop {
             match rx.recv_timeout(Duration::from_secs(2)) {
@@ -48,16 +51,19 @@ pub fn start(
                     // Debounce: absorve a rajada de eventos de uma edição/rename.
                     while rx.recv_timeout(Duration::from_millis(700)).is_ok() {}
 
-                    let config_changed = reload_config(&app, &config_path);
-                    if let Some((next_workspace, next_linked)) = scope(&config_path) {
-                        sync_watches(
-                            &mut watcher,
-                            &mut watched,
-                            &next_workspace,
-                            &next_linked,
-                        );
-                        workspace = next_workspace;
-                        linked = next_linked;
+                    let current_mtime = modified(&config_path);
+                    let config_changed = if current_mtime != config_mtime {
+                        config_mtime = current_mtime;
+                        reload_config(&app, &config_path)
+                    } else {
+                        false
+                    };
+                    if config_changed {
+                        if let Some((next_workspace, next_linked)) = scope(&config_path) {
+                            sync_watches(&mut watcher, &mut watched, &next_workspace, &next_linked);
+                            workspace = next_workspace;
+                            linked = next_linked;
+                        }
                     }
                     reindex(&db_path, &workspace, &linked);
                     let _ = app.emit("memory-changed", ());
@@ -68,16 +74,16 @@ pub fn start(
                 Ok(Err(_)) => {}
                 Err(RecvTimeoutError::Timeout) => {
                     // O config.json pode ter sido alterado por fora (ex.: MCP
-                    // vinculando um projeto). Recarrega no estado do app para a
-                    // UI não continuar vendo a configuração antiga.
+                    // vinculando um projeto). Só recarrega quando o arquivo muda.
+                    let current_mtime = modified(&config_path);
+                    if current_mtime == config_mtime {
+                        continue;
+                    }
+                    config_mtime = current_mtime;
                     let config_changed = reload_config(&app, &config_path);
                     if let Some((next_workspace, next_linked)) = scope(&config_path) {
-                        let changed = sync_watches(
-                            &mut watcher,
-                            &mut watched,
-                            &next_workspace,
-                            &next_linked,
-                        );
+                        let changed =
+                            sync_watches(&mut watcher, &mut watched, &next_workspace, &next_linked);
                         workspace = next_workspace;
                         linked = next_linked;
                         if changed {
@@ -115,6 +121,12 @@ fn reload_config(app: &tauri::AppHandle, config_path: &Path) -> bool {
         *current = disk;
     }
     changed
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }
 
 fn scope(config_path: &Path) -> Option<(PathBuf, Vec<LinkedRoot>)> {

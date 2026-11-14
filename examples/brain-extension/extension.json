@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "betastart/brain",
+  "name": "Brain Tools",
+  "version": "0.1.0",
+  "description": "Exemplo de extensão usando memória, projetos e tasks via SDK.",
+  "author": "Beta Start",
+  "entry": "main.ts",
+  "commands": [
+    {
+      "id": "list-projects",
+      "title": "Listar projetos",
+      "subtitle": "Usa a API de memória do host",
+      "keywords": ["projetos", "memory", "brief"]
+    },
+    {
+      "id": "create-task",
+      "title": "Criar task de exemplo",
+      "subtitle": "Usa tasks.create no primeiro projeto",
+      "keywords": ["task", "tarefa", "exemplo"]
+    }
+  ],
+  "permissions": ["memory", "tasks"],
+  "searchProviders": []
+}

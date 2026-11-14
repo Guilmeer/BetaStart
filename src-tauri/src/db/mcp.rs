@@ -1,7 +1,7 @@
 use rusqlite::{Connection, params};
 
 use crate::error::AppResult;
-use crate::models::McpClient;
+use crate::models::{McpAudit, McpClient};
 
 pub fn create_client(
     conn: &Connection,
@@ -50,6 +50,55 @@ pub fn revoke_client(conn: &Connection, id: i64) -> AppResult<()> {
         params![id],
     )?;
     Ok(())
+}
+
+/// Registra uma chamada de ferramenta MCP (best-effort).
+pub fn audit(
+    conn: &Connection,
+    client_id: i64,
+    client_name: &str,
+    tool: &str,
+    ok: bool,
+    detail: Option<&str>,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO mcp_audit (client_id, client_name, tool, ok, detail, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            client_id,
+            client_name,
+            tool,
+            ok as i64,
+            detail,
+            crate::db::now_secs()
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn recent_audit(conn: &Connection, limit: usize) -> AppResult<Vec<McpAudit>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, client_id, client_name, tool, ok, detail, created_at
+           FROM mcp_audit
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit.clamp(1, 500) as i64], |row| {
+        Ok(McpAudit {
+            id: row.get(0)?,
+            client_id: row.get(1)?,
+            client_name: row.get(2)?,
+            tool: row.get(3)?,
+            ok: row.get::<_, i64>(4)? != 0,
+            detail: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 pub fn count(conn: &Connection) -> AppResult<i64> {

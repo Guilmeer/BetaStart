@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { open } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import "./App.css";
 import { api } from "./api";
+import { Clipboard } from "./Clipboard";
 import { Extensions } from "./Extensions";
 import { HotkeyInput } from "./HotkeyInput";
 import { Mcp } from "./Mcp";
@@ -17,13 +21,77 @@ type Screen =
   | "extensions"
   | "windows"
   | "memory"
+  | "clipboard"
   | "mcp";
+
+const SCREEN_SIZE: Record<Screen, [number, number]> = {
+  search: [760, 460],
+  onboarding: [760, 460],
+  settings: [900, 680],
+  extensions: [900, 640],
+  windows: [760, 460],
+  memory: [1120, 740],
+  clipboard: [900, 640],
+  mcp: [900, 680],
+};
+
+interface SettingsDraft {
+  hideOnBlur: boolean;
+  startOnBoot: boolean;
+  theme: string;
+  clipboardEnabled: boolean;
+  clipboardMax: number;
+  includeApps: boolean;
+  includeFiles: boolean;
+  indexDirs: string[];
+  searchMaxResults: number;
+  autoApplyRules: boolean;
+  restoreLastLayout: boolean;
+  mcpEnabled: boolean;
+  mcpPort: number;
+  storeUrl: string;
+  denoPath: string;
+}
+
+const DEFAULT_SETTINGS: SettingsDraft = {
+  hideOnBlur: true,
+  startOnBoot: false,
+  theme: "dark",
+  clipboardEnabled: true,
+  clipboardMax: 500,
+  includeApps: true,
+  includeFiles: true,
+  indexDirs: [],
+  searchMaxResults: 8,
+  autoApplyRules: true,
+  restoreLastLayout: false,
+  mcpEnabled: true,
+  mcpPort: 19000,
+  storeUrl: "",
+  denoPath: "",
+};
 
 type Row =
   | { kind: "calculator"; key: string; title: string; subtitle: string; value: string }
-  | { kind: "app"; key: string; title: string; subtitle: string; path: string }
+  | {
+      kind: "app";
+      key: string;
+      title: string;
+      subtitle: string;
+      path: string;
+      icon: string | null;
+    }
   | { kind: "file"; key: string; title: string; subtitle: string; path: string }
-  | { kind: "clipboard"; key: string; title: string; subtitle: string; text: string }
+  | {
+      kind: "clipboard";
+      key: string;
+      title: string;
+      subtitle: string;
+      text: string;
+      id: number;
+      isImage: boolean;
+    }
+  | { kind: "web"; key: string; title: string; subtitle: string; url: string }
   | {
       kind: "command";
       key: string;
@@ -33,16 +101,83 @@ type Row =
       commandId: string;
     };
 
-function badgeLabel(kind: Row["kind"]): string {
-  switch (kind) {
+const WEB_ACTIONS: Array<{
+  prefix: string;
+  label: string;
+  build: (term: string) => string;
+}> = [
+  {
+    prefix: "g",
+    label: "Buscar no Google",
+    build: (term) => `https://www.google.com/search?q=${encodeURIComponent(term)}`,
+  },
+  {
+    prefix: "yt",
+    label: "Buscar no YouTube",
+    build: (term) =>
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(term)}`,
+  },
+  {
+    prefix: "gh",
+    label: "Buscar no GitHub",
+    build: (term) => `https://github.com/search?q=${encodeURIComponent(term)}`,
+  },
+  {
+    prefix: "w",
+    label: "Buscar na Wikipédia",
+    build: (term) =>
+      `https://pt.wikipedia.org/w/index.php?search=${encodeURIComponent(term)}`,
+  },
+  {
+    prefix: "ddg",
+    label: "Buscar no DuckDuckGo",
+    build: (term) => `https://duckduckgo.com/?q=${encodeURIComponent(term)}`,
+  },
+  {
+    prefix: "maps",
+    label: "Abrir no Google Maps",
+    build: (term) =>
+      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(term)}`,
+  },
+];
+
+function webAction(query: string): Row | null {
+  const trimmed = query.trim();
+  const lower = trimmed.toLowerCase();
+  for (const action of WEB_ACTIONS) {
+    if (!lower.startsWith(`${action.prefix} `)) continue;
+    const term = trimmed.slice(action.prefix.length).trim();
+    if (!term) return null;
+    const url = action.build(term);
+    return {
+      kind: "web",
+      key: `web:${action.prefix}:${term}`,
+      title: `${action.label}: ${term}`,
+      subtitle: url,
+      url,
+    };
+  }
+  return null;
+}
+
+function badgeLabel(row: Row): string {
+  switch (row.kind) {
     case "app":
-      return "A";
-    case "file":
+      return row.title.trim().charAt(0).toUpperCase() || "A";
+    case "file": {
+      const dot = row.title.lastIndexOf(".");
+      if (dot > 0 && dot < row.title.length - 1) {
+        const extension = row.title.slice(dot + 1);
+        if (extension.length <= 3) return extension.toUpperCase();
+      }
       return "F";
+    }
     case "clipboard":
       return "C";
     case "calculator":
       return "=";
+    case "web":
+      return "↗";
     case "command":
       return "›";
   }
@@ -62,6 +197,20 @@ function App() {
   const [hotkey, setHotkey] = useState("Alt+Space");
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settings, setSettings] = useState<SettingsDraft>(DEFAULT_SETTINGS);
+  const [newIndexDir, setNewIndexDir] = useState("");
+
+  const updateRef = useRef<Update | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<
+    "idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error"
+  >("idle");
+  const [updateInfo, setUpdateInfo] = useState<{
+    version: string;
+    notes: string | null;
+    date: string | null;
+  } | null>(null);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -77,6 +226,23 @@ function App() {
     setConfig(cfg);
     setMode(cfg.startMenu.mode === "replace" ? "replace" : "off");
     setHotkey(cfg.hotkeys.launcher);
+    setSettings({
+      hideOnBlur: cfg.tray.hideOnBlur,
+      startOnBoot: cfg.tray.startOnBoot,
+      theme: cfg.appearance.theme || "dark",
+      clipboardEnabled: cfg.clipboard.enabled,
+      clipboardMax: cfg.clipboard.maxEntries,
+      includeApps: cfg.search.includeApps,
+      includeFiles: cfg.search.includeFiles,
+      indexDirs: [...cfg.search.indexDirs],
+      searchMaxResults: cfg.search.maxResults,
+      autoApplyRules: cfg.windows.autoApplyRules,
+      restoreLastLayout: cfg.windows.restoreLastLayout ?? false,
+      mcpEnabled: cfg.mcp.enabled,
+      mcpPort: cfg.mcp.http.port,
+      storeUrl: cfg.extensions.storeUrl,
+      denoPath: cfg.extensions.denoPath ?? "",
+    });
   }, []);
 
   const load = useCallback(async () => {
@@ -95,6 +261,22 @@ function App() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      const resolved =
+        settings.theme === "auto"
+          ? media.matches
+            ? "light"
+            : "dark"
+          : settings.theme;
+      document.documentElement.dataset.theme = resolved === "light" ? "light" : "dark";
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [settings.theme]);
 
   // O config.json também muda por fora (ex.: MCP vinculando um projeto).
   useEffect(() => {
@@ -129,8 +311,7 @@ function App() {
   // A tela de memória precisa de mais espaço.
   useEffect(() => {
     const window = getCurrentWindow();
-    const width = screen === "memory" ? 1120 : screen === "mcp" ? 900 : 760;
-    const height = screen === "memory" ? 740 : screen === "mcp" ? 680 : 460;
+    const [width, height] = SCREEN_SIZE[screen];
     void window
       .setSize(new LogicalSize(width, height))
       .then(() => window.center())
@@ -168,8 +349,10 @@ function App() {
   }, [toast]);
 
   const rows = useMemo<Row[]>(() => {
-    if (!results) return [];
     const out: Row[] = [];
+    const web = webAction(query);
+    if (web) out.push(web);
+    if (!results) return out;
 
     if (results.calculation) {
       out.push({
@@ -187,6 +370,7 @@ function App() {
         title: app.name,
         subtitle: app.exePath,
         path: app.exePath,
+        icon: app.iconPath,
       });
     }
     for (const file of results.files) {
@@ -199,13 +383,22 @@ function App() {
       });
     }
     for (const clip of results.clipboard) {
+      const isImage = clip.kind === "image";
       const text = (clip.text ?? "").replace(/\s+/g, " ").trim();
       out.push({
         kind: "clipboard",
         key: `clip:${clip.id}`,
-        title: text.length > 90 ? `${text.slice(0, 90)}…` : text || "(vazio)",
-        subtitle: "Área de transferência",
+        title: isImage
+          ? "Imagem copiada"
+          : text.length > 90
+            ? `${text.slice(0, 90)}…`
+            : text || "(vazio)",
+        subtitle: isImage
+          ? "Área de transferência · imagem"
+          : "Área de transferência",
         text: clip.text ?? "",
+        id: clip.id,
+        isImage,
       });
     }
     for (const command of results.commands) {
@@ -220,22 +413,28 @@ function App() {
       });
     }
     return out;
-  }, [results]);
+  }, [results, query]);
 
   const activate = useCallback(
     async (row: Row) => {
       try {
-        if (row.kind === "app") {
+        if (row.kind === "web") {
+          await api.openPath(row.url);
+          await api.hideLauncher();
+        } else if (row.kind === "app") {
           await api.launchApp(row.path);
+          void api.touchUsage(row.kind, row.key).catch(() => {});
           await api.hideLauncher();
         } else if (row.kind === "file") {
           await api.openPath(row.path);
+          void api.touchUsage(row.kind, row.key).catch(() => {});
           await api.hideLauncher();
         } else if (row.kind === "calculator") {
           await api.copyText(row.value);
           await api.hideLauncher();
         } else if (row.kind === "clipboard") {
-          await api.copyText(row.text);
+          await api.copyClipboard(row.id);
+          void api.touchUsage(row.kind, row.key).catch(() => {});
           await api.hideLauncher();
         } else {
           const result = await api.runExtensionCommand(
@@ -243,11 +442,15 @@ function App() {
             row.commandId,
             {},
           );
+          void api.touchUsage(row.kind, row.key).catch(() => {});
           if (result.kind === "message") {
-            setToast(result.text ?? "Comando executado.");
+            setToast(result.text ?? result.toast ?? "Comando executado.");
             return;
           }
           await api.hideLauncher();
+          if (result.toast) {
+            void api.notify("Beta Start", result.toast).catch(() => {});
+          }
         }
         await refreshStatus();
       } catch (error) {
@@ -287,19 +490,167 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [screen, rows, selected, activate]);
 
+  const updateSettings = useCallback((patch: Partial<SettingsDraft>) => {
+    setSettings((current) => ({ ...current, ...patch }));
+  }, []);
+
+  const addIndexDir = useCallback((value: string) => {
+    const path = value.trim();
+    if (!path) return;
+    setSettings((current) =>
+      current.indexDirs.includes(path)
+        ? current
+        : { ...current, indexDirs: [...current.indexDirs, path] },
+    );
+    setNewIndexDir("");
+  }, []);
+
+  const removeIndexDir = useCallback((value: string) => {
+    setSettings((current) => ({
+      ...current,
+      indexDirs: current.indexDirs.filter((item) => item !== value),
+    }));
+  }, []);
+
+  const pickIndexDir = useCallback(async () => {
+    try {
+      await api.setNativeDialogOpen(true);
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Selecionar pasta para indexar",
+      });
+      if (selected && !Array.isArray(selected)) addIndexDir(selected);
+    } catch (error) {
+      setSettingsMsg(String(error));
+    } finally {
+      await api.setNativeDialogOpen(false).catch(() => {});
+    }
+  }, [addIndexDir]);
+
   const saveSettings = useCallback(async () => {
     setSettingsBusy(true);
     setSettingsMsg(null);
     try {
-      const cfg = await api.applyLauncherSettings(mode, hotkey.trim());
+      await api.applyLauncherSettings(mode, hotkey.trim());
+      const cfg = await api.setConfig({
+        tray: {
+          hideOnBlur: settings.hideOnBlur,
+          startOnBoot: settings.startOnBoot,
+        },
+        clipboard: {
+          enabled: settings.clipboardEnabled,
+          maxEntries: Math.max(
+            50,
+            Math.min(5000, Number(settings.clipboardMax) || 500),
+          ),
+        },
+        search: {
+          includeApps: settings.includeApps,
+          includeFiles: settings.includeFiles,
+          indexDirs: settings.indexDirs,
+          maxResults: Math.max(
+            4,
+            Math.min(30, Number(settings.searchMaxResults) || 8),
+          ),
+        },
+        windows: {
+          autoApplyRules: settings.autoApplyRules,
+          restoreLastLayout: settings.restoreLastLayout,
+        },
+        appearance: { theme: settings.theme },
+        mcp: {
+          enabled: settings.mcpEnabled,
+          http: {
+            enabled: settings.mcpEnabled,
+            port: Math.max(
+              1024,
+              Math.min(65535, Number(settings.mcpPort) || 19000),
+            ),
+          },
+        },
+        extensions: {
+          storeUrl: settings.storeUrl.trim(),
+          denoPath: settings.denoPath.trim() || null,
+        },
+      });
       applyConfig(cfg);
+      setToast("Configurações salvas.");
       setScreen("search");
     } catch (error) {
       setSettingsMsg(String(error));
     } finally {
       setSettingsBusy(false);
     }
-  }, [mode, hotkey, applyConfig]);
+  }, [mode, hotkey, settings, applyConfig]);
+
+  const checkUpdates = useCallback(async () => {
+    setUpdateStatus("checking");
+    setUpdateMessage(null);
+    setUpdateProgress(0);
+    try {
+      if (updateRef.current) {
+        await updateRef.current.close().catch(() => {});
+        updateRef.current = null;
+      }
+      const update = await check();
+      if (!update) {
+        setUpdateInfo(null);
+        setUpdateStatus("latest");
+        return;
+      }
+      updateRef.current = update;
+      setUpdateInfo({
+        version: update.version,
+        notes: update.body ?? null,
+        date: update.date ?? null,
+      });
+      setUpdateStatus("available");
+    } catch (error) {
+      setUpdateStatus("error");
+      setUpdateMessage(String(error));
+    }
+  }, []);
+
+  const installUpdate = useCallback(async () => {
+    const update = updateRef.current;
+    if (!update) return;
+    setUpdateStatus("downloading");
+    setUpdateProgress(0);
+    setUpdateMessage(null);
+    let downloaded = 0;
+    let total = 0;
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          setUpdateProgress(
+            total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0,
+          );
+        } else if (event.event === "Finished") {
+          setUpdateProgress(100);
+        }
+      });
+      setUpdateStatus("ready");
+      // No Windows o instalador já encerra o app; nos demais, reinicia aqui.
+      await relaunch();
+    } catch (error) {
+      setUpdateStatus("error");
+      setUpdateMessage(String(error));
+    }
+  }, []);
+
+  const dismissUpdate = useCallback(async () => {
+    if (updateRef.current) {
+      await updateRef.current.close().catch(() => {});
+      updateRef.current = null;
+    }
+    setUpdateInfo(null);
+    setUpdateStatus("idle");
+    setUpdateMessage(null);
+  }, []);
 
   const chooseOnboarding = useCallback(
     async (next: "replace" | "off") => {
@@ -349,6 +700,15 @@ function App() {
               ? `${status.appsIndexed} apps · ${status.filesIndexed} arq · ${status.clipboardCount} clips · ${status.extensionsCount} ext`
               : "carregando…"}
           </span>
+          <button
+            className="icon-btn"
+            title="Área de transferência"
+            onClick={() =>
+              setScreen(screen === "clipboard" ? "search" : "clipboard")
+            }
+          >
+            📋
+          </button>
           <button
             className="icon-btn"
             title="MCP"
@@ -430,44 +790,382 @@ function App() {
 
       {screen === "settings" && (
         <section className="settings">
-          <h1>Configurações</h1>
+          <div className="ext-header">
+            <h1>Configurações</h1>
+            <button className="secondary" onClick={() => setScreen("search")}>
+              Voltar
+            </button>
+          </div>
 
-          <div className="field">
-            <span className="field-label">Atalho do launcher</span>
-            <HotkeyInput
-              value={hotkey}
-              onChange={(combo) => setHotkey(combo)}
-              excludeLauncher
-              placeholder="Clique e pressione o atalho (ex.: Alt+Space)"
-            />
+          <div className="settings-section">
+            <h2>Launcher</h2>
+            <div className="field">
+              <span className="field-label">Atalho do launcher</span>
+              <HotkeyInput
+                value={hotkey}
+                onChange={(combo) => setHotkey(combo)}
+                excludeLauncher
+                placeholder="Clique e pressione o atalho (ex.: Alt+Space)"
+              />
+              <span className="field-hint">
+                Clique no campo e pressione a combinação desejada. Padrão: Alt+Space.
+              </span>
+            </div>
+
+            <div className="field">
+              <span className="field-label">Tecla Windows</span>
+              <div className="radio-row">
+                <button
+                  className={`radio ${mode === "off" ? "active" : ""}`}
+                  onClick={() => setMode("off")}
+                >
+                  Não substituir (recomendado)
+                </button>
+                <button
+                  className={`radio ${mode === "replace" ? "active" : ""}`}
+                  onClick={() => setMode("replace")}
+                >
+                  Substituir a tecla Win
+                </button>
+              </div>
+              <span className="field-hint">
+                Win+X é usado pelo próprio Windows; por isso o padrão é Alt+Space.
+              </span>
+              <span className="field-hint">
+                Hook da tecla Win:{" "}
+                {status?.winHookActive ? "ativo" : "inativo"}
+              </span>
+            </div>
+
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={settings.hideOnBlur}
+                onChange={(event) =>
+                  updateSettings({ hideOnBlur: event.target.checked })
+                }
+              />
+              <span>Fechar ao clicar fora do launcher</span>
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={settings.startOnBoot}
+                onChange={(event) =>
+                  updateSettings({ startOnBoot: event.target.checked })
+                }
+              />
+              <span>Iniciar com o Windows</span>
+            </label>
+          </div>
+
+          <div className="settings-section">
+            <h2>Aparência</h2>
+            <label className="field">
+              <span className="field-label">Tema</span>
+              <select
+                className="text-input"
+                value={settings.theme}
+                onChange={(event) =>
+                  updateSettings({ theme: event.target.value })
+                }
+              >
+                <option value="dark">Escuro</option>
+                <option value="light">Claro</option>
+                <option value="auto">Automático (Windows)</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="settings-section">
+            <h2>Atualizações</h2>
+            <div className="settings-grid">
+              <div className="field">
+                <span className="field-label">Versão instalada</span>
+                <code className="update-version">
+                  {status?.version ?? "carregando…"}
+                </code>
+              </div>
+              <button
+                className="secondary"
+                disabled={
+                  updateStatus === "checking" ||
+                  updateStatus === "downloading"
+                }
+                onClick={() => void checkUpdates()}
+              >
+                {updateStatus === "checking"
+                  ? "Verificando…"
+                  : "Verificar atualizações"}
+              </button>
+            </div>
+
+            {updateStatus === "latest" && (
+              <span className="field-hint">
+                Você já está na versão mais recente.
+              </span>
+            )}
+
+            {updateStatus === "available" && updateInfo && (
+              <div className="update-card">
+                <strong>Nova versão {updateInfo.version} disponível</strong>
+                {updateInfo.date && (
+                  <span className="field-hint">
+                    Publicada em{" "}
+                    {new Date(updateInfo.date).toLocaleString()}
+                  </span>
+                )}
+                {updateInfo.notes && (
+                  <div className="update-notes">{updateInfo.notes}</div>
+                )}
+                <div className="settings-actions">
+                  <button
+                    className="primary"
+                    onClick={() => void installUpdate()}
+                  >
+                    Baixar e instalar
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => void dismissUpdate()}
+                  >
+                    Depois
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {updateStatus === "downloading" && (
+              <div className="update-card">
+                <strong>Baixando atualização…</strong>
+                <div className="update-progress">
+                  <div
+                    className="update-progress-bar"
+                    style={{ width: `${updateProgress}%` }}
+                  />
+                </div>
+                <span className="field-hint">{updateProgress}%</span>
+              </div>
+            )}
+
+            {updateStatus === "ready" && (
+              <span className="field-hint">
+                Atualização instalada. Reiniciando…
+              </span>
+            )}
+
+            {updateStatus === "error" && (
+              <>
+                <span className="settings-msg">{updateMessage}</span>
+                <span className="field-hint">
+                  Se o endpoint ainda for o placeholder, configure o repositório
+                  de releases em <code>tauri.conf.json</code> (ou use o workflow
+                  de release no GitHub).
+                </span>
+              </>
+            )}
+
             <span className="field-hint">
-              Clique no campo e pressione a combinação desejada. Padrão: Alt+Space.
+              As atualizações são assinadas (minisign). O app só instala um
+              pacote cuja assinatura combine com a chave pública embutida.
             </span>
           </div>
 
-          <div className="field">
-            <span className="field-label">Tecla Windows</span>
-            <div className="radio-row">
-              <button
-                className={`radio ${mode === "off" ? "active" : ""}`}
-                onClick={() => setMode("off")}
-              >
-                Não substituir (recomendado)
-              </button>
-              <button
-                className={`radio ${mode === "replace" ? "active" : ""}`}
-                onClick={() => setMode("replace")}
-              >
-                Substituir a tecla Win
-              </button>
+          <div className="settings-section">
+            <h2>Busca e índice</h2>
+            <div className="settings-grid">
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={settings.includeApps}
+                  onChange={(event) =>
+                    updateSettings({ includeApps: event.target.checked })
+                  }
+                />
+                <span>Buscar aplicativos</span>
+              </label>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={settings.includeFiles}
+                  onChange={(event) =>
+                    updateSettings({ includeFiles: event.target.checked })
+                  }
+                />
+                <span>Buscar arquivos</span>
+              </label>
+              <label className="field">
+                <span className="field-label">Máximo de resultados</span>
+                <input
+                  className="text-input"
+                  type="number"
+                  min={4}
+                  max={30}
+                  value={settings.searchMaxResults}
+                  onChange={(event) =>
+                    updateSettings({
+                      searchMaxResults: Number(event.target.value),
+                    })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="field">
+              <span className="field-label">Pastas indexadas</span>
+              <div className="dir-list">
+                {settings.indexDirs.length === 0 && (
+                  <span className="field-hint">
+                    Padrão: Documentos, Área de Trabalho e Downloads.
+                  </span>
+                )}
+                {settings.indexDirs.map((dir) => (
+                  <div className="dir-row" key={dir}>
+                    <code>{dir}</code>
+                    <button
+                      className="secondary"
+                      onClick={() => removeIndexDir(dir)}
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="inline">
+                <input
+                  className="text-input"
+                  value={newIndexDir}
+                  onChange={(event) => setNewIndexDir(event.target.value)}
+                  placeholder="C:\caminho\para\indexar"
+                  spellCheck={false}
+                />
+                <button
+                  className="secondary"
+                  disabled={!newIndexDir.trim()}
+                  onClick={() => addIndexDir(newIndexDir)}
+                >
+                  Adicionar
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => void pickIndexDir()}
+                >
+                  Escolher…
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h2>Clipboard</h2>
+            <div className="settings-grid">
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={settings.clipboardEnabled}
+                  onChange={(event) =>
+                    updateSettings({ clipboardEnabled: event.target.checked })
+                  }
+                />
+                <span>Salvar histórico da área de transferência</span>
+              </label>
+              <label className="field">
+                <span className="field-label">Máximo de itens</span>
+                <input
+                  className="text-input"
+                  type="number"
+                  min={50}
+                  max={5000}
+                  value={settings.clipboardMax}
+                  onChange={(event) =>
+                    updateSettings({ clipboardMax: Number(event.target.value) })
+                  }
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h2>Janelas</h2>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={settings.autoApplyRules}
+                onChange={(event) =>
+                  updateSettings({ autoApplyRules: event.target.checked })
+                }
+              />
+              <span>Aplicar regras automaticamente a janelas novas</span>
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={settings.restoreLastLayout}
+                onChange={(event) =>
+                  updateSettings({ restoreLastLayout: event.target.checked })
+                }
+              />
+              <span>Reaplicar o último layout ao iniciar</span>
+            </label>
+          </div>
+
+          <div className="settings-section">
+            <h2>MCP</h2>
+            <div className="settings-grid">
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={settings.mcpEnabled}
+                  onChange={(event) =>
+                    updateSettings({ mcpEnabled: event.target.checked })
+                  }
+                />
+                <span>Servidor MCP habilitado</span>
+              </label>
+              <label className="field">
+                <span className="field-label">Porta HTTP/SSE</span>
+                <input
+                  className="text-input"
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={settings.mcpPort}
+                  onChange={(event) =>
+                    updateSettings({ mcpPort: Number(event.target.value) })
+                  }
+                />
+              </label>
             </div>
             <span className="field-hint">
-              Win+X é usado pelo próprio Windows; por isso o padrão é Alt+Space.
+              Alterações de servidor/porta são aplicadas ao reiniciar o app.
             </span>
-            <span className="field-hint">
-              Hook da tecla Win:{" "}
-              {status?.winHookActive ? "ativo" : "inativo"}
-            </span>
+          </div>
+
+          <div className="settings-section">
+            <h2>Extensões</h2>
+            <label className="field">
+              <span className="field-label">URL da loja</span>
+              <input
+                className="text-input"
+                value={settings.storeUrl}
+                onChange={(event) =>
+                  updateSettings({ storeUrl: event.target.value })
+                }
+                spellCheck={false}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Caminho do Deno (opcional)</span>
+              <input
+                className="text-input"
+                value={settings.denoPath}
+                onChange={(event) =>
+                  updateSettings({ denoPath: event.target.value })
+                }
+                placeholder="Deixe vazio para detectar automaticamente"
+                spellCheck={false}
+              />
+            </label>
           </div>
 
           <div className="settings-actions">
@@ -505,7 +1203,10 @@ function App() {
       )}
 
       {screen === "extensions" && (
-        <Extensions onBack={() => setScreen("search")} />
+        <Extensions
+          onBack={() => setScreen("search")}
+          onChanged={() => void refreshStatus()}
+        />
       )}
 
       {screen === "windows" && (
@@ -514,6 +1215,13 @@ function App() {
 
       {screen === "memory" && (
         <Memory onBack={() => setScreen("search")} />
+      )}
+
+      {screen === "clipboard" && (
+        <Clipboard
+          onBack={() => setScreen("search")}
+          onChanged={() => void refreshStatus()}
+        />
       )}
 
       {screen === "mcp" && <Mcp onBack={() => setScreen("search")} />}
@@ -541,8 +1249,16 @@ function App() {
                 onMouseEnter={() => setSelected(index)}
                 onClick={() => void activate(row)}
               >
-                <span className={`app-icon badge-${row.kind}`}>
-                  {badgeLabel(row.kind)}
+                <span
+                  className={`app-icon badge-${row.kind}${
+                    row.kind === "app" && row.icon ? " has-icon" : ""
+                  }`}
+                >
+                  {row.kind === "app" && row.icon ? (
+                    <img src={row.icon} alt="" />
+                  ) : (
+                    badgeLabel(row)
+                  )}
                 </span>
                 <span className="app-text">
                   <span className="app-name">{row.title}</span>

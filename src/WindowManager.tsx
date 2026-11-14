@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { HotkeyInput } from "./HotkeyInput";
 import type {
@@ -27,6 +27,17 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
   const [ruleY, setRuleY] = useState("0");
   const [ruleW, setRuleW] = useState("1");
   const [ruleH, setRuleH] = useState("1");
+
+  const pickableWindows = useMemo(
+    () =>
+      windows
+        .map((win, index) => ({ win, index }))
+        .filter(
+          ({ win }) =>
+            win.title.trim() && win.process.toLowerCase() !== "betastart",
+        ),
+    [windows],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -99,6 +110,19 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             : "."),
       );
     });
+
+  const pickWindow = (value: string) => {
+    const win = windows[Number(value)];
+    if (!win) return;
+    setRuleApp(win.process);
+    setRuleField("process");
+    setRuleMonitor(win.monitor);
+    if (!ruleName.trim()) {
+      setRuleName(
+        `${win.process}${win.title ? ` — ${win.title.slice(0, 40)}` : ""}`,
+      );
+    }
+  };
 
   const createRule = () =>
     run(async () => {
@@ -210,6 +234,23 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
 
       <h2>Regras por app</h2>
       <div className="rule-form">
+        <div className="inline">
+          <select
+            className="text-input"
+            defaultValue=""
+            onChange={(event) => pickWindow(event.target.value)}
+          >
+            <option value="">Capturar janela aberta…</option>
+            {pickableWindows.map(({ win, index }) => (
+              <option key={`${win.handle}-${index}`} value={index}>
+                {win.process} — {win.title.slice(0, 60)}
+              </option>
+            ))}
+          </select>
+          <button className="secondary" onClick={() => void refresh()}>
+            Atualizar janelas
+          </button>
+        </div>
         <div className="inline">
           <input
             className="text-input"

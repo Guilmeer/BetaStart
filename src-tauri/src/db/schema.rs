@@ -24,8 +24,45 @@ pub fn init(conn: &mut Connection) -> AppResult<()> {
         conn.execute_batch(MIGRATION_V4)?;
         conn.pragma_update(None, "user_version", 4)?;
     }
+    if version < 5 {
+        conn.execute_batch(MIGRATION_V5)?;
+        conn.pragma_update(None, "user_version", 5)?;
+    }
+    if version < 6 {
+        conn.execute_batch(MIGRATION_V6)?;
+        conn.pragma_update(None, "user_version", 6)?;
+    }
     Ok(())
 }
+
+const MIGRATION_V6: &str = r#"
+CREATE TABLE IF NOT EXISTS mcp_audit (
+  id          INTEGER PRIMARY KEY,
+  client_id   INTEGER,
+  client_name TEXT    NOT NULL,
+  tool        TEXT    NOT NULL,
+  ok          INTEGER NOT NULL,
+  detail      TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_created ON mcp_audit(created_at DESC);
+"#;
+
+const MIGRATION_V5: &str = r#"
+-- Popula os índices FTS que existiam mas ainda eram consultados com LIKE.
+INSERT INTO files_fts(files_fts) VALUES('rebuild');
+INSERT INTO memory_fts(memory_fts) VALUES('rebuild');
+
+-- Ranking por frequência/recência dos resultados do launcher.
+CREATE TABLE IF NOT EXISTS usage_stats (
+  kind      TEXT    NOT NULL,
+  key       TEXT    NOT NULL,
+  uses      INTEGER NOT NULL DEFAULT 0,
+  last_used INTEGER,
+  PRIMARY KEY (kind, key)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_rank ON usage_stats(kind, uses DESC, last_used DESC);
+"#;
 
 const MIGRATION_V4: &str = r#"
 ALTER TABLE memory_index ADD COLUMN links TEXT;

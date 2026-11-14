@@ -6,18 +6,36 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::Stdio;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use wait_timeout::ChildExt;
 
 use crate::extensions::ExtensionManifest;
+use crate::platform::hidden_command;
 
 pub struct RunOutcome {
     pub ok: bool,
     pub result: serde_json::Value,
     pub error: Option<String>,
     pub toast: Option<String>,
+    /// Log de `stderr` da execução, quando houve alguma saída.
+    pub log_path: Option<String>,
+}
+
+/// Revoga o token da API local quando a execução termina (inclusive em erro).
+struct BridgeGuard {
+    token: Option<String>,
+}
+
+impl Drop for BridgeGuard {
+    fn drop(&mut self) {
+        if let Some(token) = &self.token {
+            crate::extensions::api::revoke(token);
+        }
+    }
 }
 
 pub struct RunnerAssets {
@@ -67,29 +85,89 @@ pub fn find_deno(configured: Option<&str>) -> Option<PathBuf> {
     None
 }
 
+struct VersionCache {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    version: String,
+}
+
+static VERSION_CACHE: Mutex<Option<VersionCache>> = Mutex::new(None);
+static RUN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Lê a versão do Deno, reaproveitando o resultado enquanto o executável não mudar.
+///
+/// A tela de Extensões chama isto a cada montagem; sem cache, cada visita
+/// iniciaria um processo novo (e, antes do `CREATE_NO_WINDOW`, uma janela de
+/// console que fechava o launcher).
 pub fn version(deno: &Path) -> Option<String> {
-    let output = Command::new(deno).arg("--version").output().ok()?;
+    let modified = std::fs::metadata(deno)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+
+    if let Ok(cache) = VERSION_CACHE.lock() {
+        if let Some(entry) = cache.as_ref() {
+            if entry.path == deno && entry.modified == modified {
+                return Some(entry.version.clone());
+            }
+        }
+    }
+
+    let output = hidden_command(deno).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines().next().map(|line| line.trim().to_string())
+    let version = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(|line| line.trim().to_string())?;
+
+    if let Ok(mut cache) = VERSION_CACHE.lock() {
+        *cache = Some(VersionCache {
+            path: deno.to_path_buf(),
+            modified,
+            version: version.clone(),
+        });
+    }
+    Some(version)
 }
 
-/// Garante que o Deno exista; se não, baixa a release oficial para a pasta gerenciada.
+/// Garante que o Deno exista e funcione; se não, baixa a release oficial para a pasta gerenciada.
 pub fn ensure_deno(configured: Option<&str>) -> Result<PathBuf, String> {
     if let Some(found) = find_deno(configured) {
-        return Ok(found);
+        // Um arquivo interrompido/parcial pode existir sem ser executável.
+        if version(&found).is_some() {
+            return Ok(found);
+        }
+    }
+    // Caminho configurado quebrado: tenta as outras origens antes de baixar.
+    if configured.is_some() {
+        if let Some(fallback) = find_deno(None) {
+            if version(&fallback).is_some() {
+                return Ok(fallback);
+            }
+        }
     }
     let target = managed_deno_path();
     download_deno(&target)?;
+    if version(&target).is_none() {
+        return Err(format!(
+            "o Deno foi baixado, mas não executou corretamente ({})",
+            target.display()
+        ));
+    }
     Ok(target)
 }
 
 fn download_deno(target: &Path) -> Result<(), String> {
     let url =
         "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
-    let response = ureq::get(url)
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(120))
+        .timeout(Duration::from_secs(300))
+        .build();
+    let response = agent
+        .get(url)
         .call()
         .map_err(|e| format!("download do Deno falhou: {e}"))?;
 
@@ -108,9 +186,79 @@ fn download_deno(target: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let mut out = std::fs::File::create(target).map_err(|e| e.to_string())?;
-    std::io::copy(&mut exe, &mut out).map_err(|e| e.to_string())?;
+
+    // Escreve num arquivo temporário e só troca no final: um download
+    // interrompido não deixa um deno.exe quebrado na pasta gerenciada.
+    let partial = target.with_extension("download");
+    let _ = std::fs::remove_file(&partial);
+    let mut out = std::fs::File::create(&partial).map_err(|e| e.to_string())?;
+    if let Err(error) = std::io::copy(&mut exe, &mut out) {
+        let _ = std::fs::remove_file(&partial);
+        return Err(error.to_string());
+    }
+    drop(out);
+
+    if target.exists() {
+        std::fs::remove_file(target).map_err(|e| {
+            let _ = std::fs::remove_file(&partial);
+            format!("não foi possível substituir {}: {e}", target.display())
+        })?;
+    }
+    std::fs::rename(&partial, target).map_err(|e| {
+        let _ = std::fs::remove_file(&partial);
+        e.to_string()
+    })?;
     Ok(())
+}
+
+/// Remove payloads/resultados antigos deixados por execuções interrompidas.
+pub fn cleanup_temp_files(max_age: Duration) {
+    let dir = crate::core::paths::ext_temp_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("payload-") && !name.starts_with("result-") {
+            continue;
+        }
+        let path = entry.path();
+        let expired = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age > max_age)
+            .unwrap_or(false);
+        if expired {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// Mantém apenas os logs mais recentes.
+pub fn cleanup_logs(max_files: usize) {
+    let dir = crate::core::paths::extension_logs_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut files: Vec<(SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("log") {
+                return None;
+            }
+            let modified = std::fs::metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .ok()?;
+            Some((modified, path))
+        })
+        .collect();
+    files.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, path) in files.into_iter().skip(max_files) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Escreve o runner, o SDK e o import map na pasta de runtime.
@@ -163,20 +311,50 @@ pub fn run_command(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let payload_path = temp.join(format!("payload-{stamp}.json"));
-    let result_path = temp.join(format!("result-{stamp}.json"));
+    // Evita colisão quando duas execuções começam no mesmo milissegundo.
+    let sequence = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
+    let run_id = format!("{stamp}-{}-{sequence}", std::process::id());
+    let payload_path = temp.join(format!("payload-{run_id}.json"));
+    let result_path = temp.join(format!("result-{run_id}.json"));
+
+    let log_dir = crate::core::paths::extension_logs_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let safe_id: String = manifest
+        .id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let log_path = log_dir.join(format!("{safe_id}-{run_id}.log"));
+    let log_file = std::fs::File::create(&log_path).ok();
+
+    // O token é efêmero e cobre só esta execução; o `BridgeGuard` revoga no fim.
+    let bridge = crate::extensions::api::bridge(&manifest.id, granted);
+    let _bridge_guard = bridge.as_ref().map(|bridge| BridgeGuard {
+        token: Some(bridge.token.clone()),
+    });
 
     let payload = serde_json::json!({
         "entryPath": entry.to_string_lossy(),
         "commandId": command_id,
         "args": args,
         "resultPath": result_path.to_string_lossy(),
+        "apiUrl": bridge.as_ref().map(|bridge| bridge.url.clone()),
+        "apiToken": bridge.as_ref().map(|bridge| bridge.token.clone()),
     });
-    std::fs::write(
-        &payload_path,
-        serde_json::to_vec(&payload).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
+        let _ = std::fs::remove_file(&log_path);
+        e.to_string()
+    })?;
+    if let Err(error) = std::fs::write(&payload_path, payload_bytes) {
+        let _ = std::fs::remove_file(&log_path);
+        return Err(error.to_string());
+    }
 
     let mut read_paths = vec![
         runtime_dir.to_path_buf(),
@@ -210,7 +388,7 @@ pub fn run_command(
         .collect::<Vec<_>>()
         .join(",");
 
-    let mut command = Command::new(deno);
+    let mut command = hidden_command(deno);
     command
         .arg("run")
         .arg("--quiet")
@@ -225,6 +403,9 @@ pub fn run_command(
 
     if has("network") {
         command.arg("--allow-net");
+    } else if let Some(bridge) = &bridge {
+        // Sem `network`, a extensão pode falar apenas com a API local do app.
+        command.arg(format!("--allow-net=127.0.0.1:{}", bridge.port));
     }
     if has("shell") {
         command.arg("--allow-run");
@@ -235,31 +416,53 @@ pub fn run_command(
         .arg(&payload_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(match log_file {
+            Some(file) => Stdio::from(file),
+            None => Stdio::null(),
+        });
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("falha ao executar Deno: {e}"))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            drop(command);
+            let _ = std::fs::remove_file(&payload_path);
+            let _ = std::fs::remove_file(&log_path);
+            return Err(format!("falha ao executar Deno: {error}"));
+        }
+    };
 
     let status = child
         .wait_timeout(Duration::from_secs(20))
         .map_err(|e| e.to_string())?;
 
-    if status.is_none() {
+    let Some(status) = status else {
         let _ = child.kill();
         let _ = child.wait();
         let _ = std::fs::remove_file(&payload_path);
         let _ = std::fs::remove_file(&result_path);
-        return Err("a extensão excedeu o tempo limite (20s)".into());
-    }
+        let (_, log_hint) = collect_log(&log_path);
+        return Err(format!("a extensão excedeu o tempo limite (20s){log_hint}"));
+    };
 
     let _ = std::fs::remove_file(&payload_path);
-    let raw = std::fs::read_to_string(&result_path)
-        .map_err(|e| format!("a extensão não retornou resultado: {e}"))?;
+    let (log_path_value, log_hint) = collect_log(&log_path);
+    let raw = match std::fs::read_to_string(&result_path) {
+        Ok(raw) => raw,
+        Err(error) if !status.success() => {
+            return Err(format!(
+                "a extensão terminou com {status} sem retornar resultado: {error}{log_hint}"
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "a extensão não retornou resultado: {error}{log_hint}"
+            ));
+        }
+    };
     let _ = std::fs::remove_file(&result_path);
 
     let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("resultado inválido: {e}"))?;
+        serde_json::from_str(&raw).map_err(|e| format!("resultado inválido: {e}{log_hint}"))?;
 
     Ok(RunOutcome {
         ok: value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -275,7 +478,25 @@ pub fn run_command(
             .get("toast")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        log_path: log_path_value,
     })
+}
+
+/// Retorna o caminho do log (se não estiver vazio) e um trecho para a mensagem de erro.
+fn collect_log(path: &Path) -> (Option<String>, String) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, String::new());
+    };
+    if text.trim().is_empty() {
+        let _ = std::fs::remove_file(path);
+        return (None, String::new());
+    }
+    let tail: String = text.chars().rev().take(1600).collect::<String>();
+    let tail: String = tail.chars().rev().collect();
+    (
+        Some(path.to_string_lossy().to_string()),
+        format!("\nLog:\n{}", tail.trim()),
+    )
 }
 
 #[cfg(test)]
@@ -399,6 +620,84 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&db_path);
     }
+
+    /// Executa a extensão de exemplo que conversa com a API local do host.
+    #[test]
+    fn runs_extension_with_host_sdk() {
+        let deno = match find_deno(None) {
+            Some(path) => path,
+            None => {
+                eprintln!("Deno não encontrado; teste ignorado.");
+                return;
+            }
+        };
+
+        let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("examples")
+            .join("brain-extension");
+
+        let root =
+            std::env::temp_dir().join(format!("betastart-ext-sdk-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("root");
+
+        let manifest = crate::extensions::install_from_dir(&root.join("extensions"), &example)
+            .expect("instalar exemplo");
+        let installed = root
+            .join("extensions")
+            .join(crate::extensions::folder_name(&manifest.id));
+
+        let db_path = root.join("data.db");
+        let conn = crate::db::open(&db_path).expect("db");
+        crate::db::extensions::upsert(
+            &conn,
+            &manifest,
+            "local",
+            None,
+            &installed.to_string_lossy(),
+        )
+        .expect("registrar");
+        crate::db::extensions::set_permissions(&conn, &manifest.id, &manifest.permissions)
+            .expect("aprovar");
+        let row = crate::db::extensions::get_row(&conn, &manifest.id)
+            .expect("get")
+            .expect("row");
+        drop(conn);
+
+        let mut config = crate::core::config::Config::default();
+        config.workspace.path = root.join("workspace").to_string_lossy().to_string();
+        config.save(&root.join("config.json")).expect("config");
+
+        let _guard = crate::extensions::api::test_lock();
+        crate::extensions::api::start(root.clone()).expect("api server");
+
+        let runtime = std::env::temp_dir().join("betastart-ext-runtime-sdk-test");
+        let workspace = root.join("workspace");
+        let outcome = run_command(
+            &deno,
+            &runtime,
+            std::path::Path::new(&row.install_path),
+            &row.manifest,
+            "list-projects",
+            serde_json::json!({}),
+            &row.granted,
+            Some(&workspace),
+        )
+        .expect("executar SDK");
+
+        assert!(
+            outcome.ok,
+            "extensão falhou: {:?} (log {:?})",
+            outcome.error, outcome.log_path
+        );
+        assert_eq!(
+            outcome.result.get("type").and_then(|value| value.as_str()),
+            Some("message")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 const SDK_JS: &str = r#"// @betastart/sdk — API exposta às extensões.
@@ -425,6 +724,87 @@ export function registerSearchProvider(options) {
   providers.push(options);
 }
 
+const api = {
+  url: globalThis.__betastartApiUrl ?? null,
+  token: globalThis.__betastartApiToken ?? null,
+};
+
+async function request(path, body) {
+  if (!api.url || !api.token) {
+    throw new Error("API do host indisponível nesta execução");
+  }
+  const response = await fetch(`${api.url}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: api.token, ...body }),
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    // resposta sem JSON
+  }
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error ?? `falha na API do host (${response.status})`);
+  }
+  return payload;
+}
+
+async function callTool(name, args = {}) {
+  const payload = await request("/tool", { name, args });
+  return payload.result;
+}
+
+export const memory = {
+  list: (project) =>
+    callTool("memory.list", project ? { project } : {}),
+  read: (path, project) =>
+    callTool("memory.read", { path, ...(project ? { project } : {}) }),
+  write: (path, content, project) =>
+    callTool("memory.write", {
+      path,
+      content,
+      ...(project ? { project } : {}),
+    }),
+  search: (query, options = {}) =>
+    callTool("memory.search", { query, ...options }),
+};
+
+export const projects = {
+  list: () => callTool("project.list", {}),
+  create: (slug, title) => callTool("project.create", { slug, title }),
+  link: (root, title) => callTool("project.link", { root, title }),
+  unlink: (slug) => callTool("project.unlink", { slug }),
+  brief: (project) => callTool("project.brief", { project }),
+};
+
+export const graph = {
+  get: (project) =>
+    callTool("graph.get", project ? { project } : {}),
+};
+
+export const tasks = {
+  list: (options = {}) => callTool("tasks.list", options),
+  create: (input) => callTool("tasks.create", input),
+  createMany: (tasks) => callTool("tasks.create_many", { tasks }),
+  update: (id, patch) => callTool("tasks.update", { id, ...patch }),
+  delete: (id) => callTool("tasks.delete", { id }),
+};
+
+export const windows = {
+  list: () => callTool("windows.list", {}),
+  moveResize: (input) => callTool("windows.move_resize", input),
+  applyLayout: (id) => callTool("windows.apply_layout", { id }),
+  saveLayout: (name, hotkey) =>
+    callTool("windows.save_layout", { name, hotkey }),
+};
+
+export const search = {
+  query: (query, limit = 10) => callTool("search.query", { query, limit }),
+};
+
+export const host = { call: callTool };
+
 export const ui = {
   close() {},
   toast(message) {
@@ -435,6 +815,10 @@ export const ui = {
 export const clipboard = {
   write(text) {
     return { type: "copy", text: String(text) };
+  },
+  async read() {
+    const payload = await request("/clipboard/read", {});
+    return payload.text ?? "";
   },
 };
 
@@ -467,6 +851,8 @@ try {
 
 const resultPath = payload.resultPath;
 globalThis.__betastartArgs = payload.args ?? {};
+globalThis.__betastartApiUrl = payload.apiUrl ?? null;
+globalThis.__betastartApiToken = payload.apiToken ?? null;
 
 try {
   const normalized = String(payload.entryPath).replace(/\\/g, "/");

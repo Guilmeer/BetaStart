@@ -243,12 +243,20 @@ pub struct WindowsConfig {
     /// Aplica regras por app automaticamente quando uma janela nova aparece.
     #[serde(default = "default_true")]
     pub auto_apply_rules: bool,
+    /// Reaplica o último layout usado quando o app inicia.
+    #[serde(default)]
+    pub restore_last_layout: bool,
+    /// Último layout aplicado (usado por `restore_last_layout`).
+    #[serde(default)]
+    pub last_layout_id: Option<i64>,
 }
 
 impl Default for WindowsConfig {
     fn default() -> Self {
         Self {
             auto_apply_rules: true,
+            restore_last_layout: false,
+            last_layout_id: None,
         }
     }
 }

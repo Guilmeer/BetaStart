@@ -6,7 +6,7 @@ use tauri::State;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::mcp;
-use crate::models::{McpClient, McpClientCreated};
+use crate::models::{McpAudit, McpClient, McpClientCreated};
 use crate::state::AppState;
 
 const SCOPES: &[&str] = &[
@@ -115,6 +115,15 @@ pub fn mcp_revoke_client(state: State<AppState>, id: i64) -> AppResult<()> {
         .lock()
         .map_err(|_| AppError::Database("db lock envenenado".into()))?;
     db::mcp::revoke_client(&conn, id)
+}
+
+#[tauri::command]
+pub fn mcp_audit(state: State<AppState>, limit: Option<usize>) -> AppResult<Vec<McpAudit>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::mcp::recent_audit(&conn, limit.unwrap_or(50))
 }
 
 #[tauri::command]

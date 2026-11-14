@@ -3,6 +3,7 @@ name = "betastart"
 version = "0.1.0"
 description = "Beta Start — launcher de produtividade e segundo cérebro"
 authors = ["Beta Start contributors"]
+license = "MIT"
 edition = "2024"
 
 [lib]
@@ -20,6 +21,8 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 notify = "8"
 ignore = "0.4"
 dunce = "1"
@@ -40,9 +43,11 @@ axum = "0.8"
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync"] }
 tokio-stream = "0.1"
 argon2 = "0.5"
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winuser", "shellapi", "minwindef", "windef", "libloaderapi", "processthreadsapi", "winbase", "handleapi", "winnt"] }
+winapi = { version = "0.3", features = ["winuser", "shellapi", "minwindef", "windef", "libloaderapi", "processthreadsapi", "winbase", "handleapi", "winnt", "wingdi"] }
 
 # See https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

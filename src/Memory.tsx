@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
@@ -135,6 +135,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [noteDirty, setNoteDirty] = useState(false);
+  const [backlinks, setBacklinks] = useState<MemoryFile[]>([]);
   const [workspacePath, setWorkspacePath] = useState("");
   const [search, setSearch] = useState("");
   const [searchHits, setSearchHits] = useState<MemoryHit[] | null>(null);
@@ -220,6 +221,26 @@ export function Memory({ onBack }: { onBack: () => void }) {
       setMessage(String(error));
     }
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const path = note?.path;
+    if (!path) {
+      setBacklinks([]);
+      return;
+    }
+    api
+      .getBacklinks(path)
+      .then((list) => {
+        if (active) setBacklinks(list);
+      })
+      .catch(() => {
+        if (active) setBacklinks([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [note?.path, files]);
 
   const resolveWikiLink = useCallback(
     (label: string) => {
@@ -309,32 +330,66 @@ export function Memory({ onBack }: { onBack: () => void }) {
     };
   }, [refresh, selectedPath, noteDirty]);
 
+  const noteVersion = useRef(0);
+  const autosaveBusy = useRef(false);
+
   const updateNote = (patch: Partial<NoteDetail>) => {
+    noteVersion.current += 1;
     setNote((current) => (current ? { ...current, ...patch } : current));
     setNoteDirty(true);
   };
+
+  const persistNote = useCallback(async (current: NoteDetail) => {
+    if (current.kind === "task") {
+      await api.updateTask(current.id ?? "", {
+        title: current.title,
+        status: current.status ?? "todo",
+        priority: current.priority ?? "medium",
+        due: current.due ?? "",
+        remind: current.remind ?? "",
+        tags: current.tags,
+        body: current.body,
+        parent: current.parent ?? "",
+      });
+    } else {
+      await api.saveNote(current.path, current.title, current.tags, current.body);
+    }
+  }, []);
+
+  // Autosave: evita perder edições quando o app é fechado ou a nota é trocada.
+  useEffect(() => {
+    if (!note || !noteDirty || editorMode !== "edit") return;
+    const snapshot = note;
+    const version = noteVersion.current;
+    const timer = window.setTimeout(() => {
+      if (autosaveBusy.current) return;
+      autosaveBusy.current = true;
+      void (async () => {
+        try {
+          await persistNote(snapshot);
+          if (noteVersion.current === version) {
+            setNoteDirty(false);
+            setMessage("Salvo automaticamente.");
+          }
+        } catch (error) {
+          setMessage(String(error));
+        } finally {
+          autosaveBusy.current = false;
+        }
+      })();
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [note, noteDirty, editorMode, persistNote]);
 
   const saveNote = useCallback(async () => {
     if (!note) return;
     setBusy(true);
     setMessage(null);
     try {
-      if (note.kind === "task") {
-        await api.updateTask(note.id ?? "", {
-          title: note.title,
-          status: note.status ?? "todo",
-          priority: note.priority ?? "medium",
-          due: note.due ?? "",
-          remind: note.remind ?? "",
-          tags: note.tags,
-          body: note.body,
-          parent: note.parent ?? "",
-        });
-      } else {
-        await api.saveNote(note.path, note.title, note.tags, note.body);
-      }
+      await persistNote(note);
       await refresh();
       setNote(await api.readNote(note.path));
+      noteVersion.current += 1;
       setNoteDirty(false);
       setMessage("Salvo.");
     } catch (error) {
@@ -342,7 +397,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [note, refresh]);
+  }, [note, refresh, persistNote]);
 
   const createNote = useCallback(async () => {
     setBusy(true);
@@ -359,6 +414,36 @@ export function Memory({ onBack }: { onBack: () => void }) {
       setBusy(false);
     }
   }, [projectFilter, refresh]);
+
+  const createDailyNote = useCallback(async () => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const title = `Diário ${today}`;
+    const existing = files.find((file) => file.title === title);
+    if (existing) {
+      await openFile(existing.path);
+      return;
+    }
+    setBusy(true);
+    try {
+      const created = await api.createNote(projectFilter, title);
+      const withBody = await api.saveNote(
+        created.path,
+        title,
+        ["diario"],
+        `# ${title}\n\n`,
+      );
+      setSelectedPath(created.path);
+      setNote(withBody);
+      setNoteDirty(false);
+      setEditorMode("edit");
+      await refresh();
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [files, openFile, projectFilter, refresh]);
 
   const deleteNote = useCallback(async () => {
     if (!note) return;
@@ -700,6 +785,14 @@ export function Memory({ onBack }: { onBack: () => void }) {
         <button className="primary" disabled={busy} onClick={() => void createNote()}>
           Nova nota
         </button>
+        <button
+          className="secondary"
+          disabled={busy}
+          onClick={() => void createDailyNote()}
+          title="Abre ou cria a nota de hoje"
+        >
+          Hoje
+        </button>
       </div>
 
       <div className="mem-body">
@@ -915,6 +1008,24 @@ export function Memory({ onBack }: { onBack: () => void }) {
                       [[{link.label}]]
                     </button>
                   ))}
+                </div>
+              )}
+
+              {backlinks.length > 0 && (
+                <div className="backlinks">
+                  <span className="field-label">Citado em</span>
+                  <div className="note-links">
+                    {backlinks.map((item) => (
+                      <button
+                        key={item.path}
+                        className="link-chip"
+                        title={item.path}
+                        onClick={() => void openFile(item.path)}
+                      >
+                        {item.title || item.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 

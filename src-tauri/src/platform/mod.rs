@@ -2,9 +2,29 @@
 //! alterando apenas este módulo.
 
 pub mod apps;
+pub mod autostart;
+pub mod icons;
 pub mod windows;
 
 use serde::{Deserialize, Serialize};
+
+/// Cria um `Command` que não abre janela de console no Windows.
+///
+/// O Beta Start roda como aplicativo de interface (subsistema GUI). Sem
+/// `CREATE_NO_WINDOW`, qualquer processo de console filho (Deno, git, …) abre
+/// uma janela própria que rouba o foco — e o launcher, que fecha ao perder o
+/// foco, some. Use esta função para todo processo cuja saída será capturada.
+pub fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut command = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -30,8 +30,10 @@ pub fn search(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<App
     let mut stmt = conn.prepare(
         "SELECT name, exe_path, keywords
            FROM apps_index
-          WHERE name LIKE ?1
-          ORDER BY launch_count DESC, name COLLATE NOCASE ASC
+          WHERE name LIKE ?1 OR keywords LIKE ?1
+          ORDER BY CASE WHEN name LIKE ?1 THEN 0 ELSE 1 END,
+                   launch_count DESC,
+                   name COLLATE NOCASE ASC
           LIMIT ?2",
     )?;
 

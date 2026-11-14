@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -43,13 +46,19 @@ fn paths_info(app: &AppHandle, cfg: &Config) -> AppResult<PathsInfo> {
 }
 
 fn apply_patch(app: &AppHandle, state: &AppState, patch: serde_json::Value) -> AppResult<Config> {
-    let updated = {
+    let (updated, start_on_boot_changed) = {
         let current = state
             .config
             .lock()
             .map_err(|_| AppError::Config("config lock envenenado".into()))?;
-        current.merged(patch)?
+        let previous = current.tray.start_on_boot;
+        let updated = current.merged(patch)?;
+        let changed = previous != updated.tray.start_on_boot;
+        (updated, changed)
     };
+    if start_on_boot_changed {
+        platform::autostart::set(updated.tray.start_on_boot)?;
+    }
     let path = paths::config_path(app)?;
     updated.save(&path)?;
     *state
@@ -57,6 +66,23 @@ fn apply_patch(app: &AppHandle, state: &AppState, patch: serde_json::Value) -> A
         .lock()
         .map_err(|_| AppError::Config("config lock envenenado".into()))? = updated.clone();
     Ok(updated)
+}
+
+/// Guarda o último layout aplicado para o "restaurar ao iniciar".
+pub(crate) fn remember_layout(app: &AppHandle, state: &AppState, id: i64) {
+    if let Ok(path) = paths::config_path(app) {
+        let updated = {
+            let Ok(mut config) = state.config.lock() else {
+                return;
+            };
+            if config.windows.last_layout_id == Some(id) {
+                return;
+            }
+            config.windows.last_layout_id = Some(id);
+            config.clone()
+        };
+        let _ = updated.save(&path);
+    }
 }
 
 /// Re-registra o atalho do launcher + os atalhos de todos os layouts.
@@ -352,12 +378,12 @@ pub fn search(
         .map_err(|_| AppError::Database("db lock envenenado".into()))?;
 
     let q = query.trim();
-    let apps = if include_apps {
+    let mut apps = if include_apps {
         db::apps::search(&conn, q, limit)?
     } else {
         Vec::new()
     };
-    let files = if include_files && q.chars().count() >= 2 {
+    let mut files = if include_files && q.chars().count() >= 2 {
         db::files::search(&conn, q, limit.min(10))?
     } else {
         Vec::new()
@@ -367,11 +393,37 @@ pub fn search(
     } else {
         db::clipboard::search(&conn, q, 4)?
     };
-    let commands = if q.is_empty() {
+    let mut commands = if q.is_empty() {
         Vec::new()
     } else {
         db::extensions::commands(&conn, q, 5)?
     };
+
+    // Resultados usados com mais frequência sobem, mantendo a ordem original
+    // (relevância/nome) como desempate.
+    let file_keys: Vec<String> = files
+        .iter()
+        .map(|file| format!("file:{}", file.path))
+        .collect();
+    let file_scores = db::usage::score_map(&conn, "file", &file_keys)?;
+    sort_by_usage(&mut files, &file_scores, |file| {
+        format!("file:{}", file.path)
+    });
+
+    let command_keys: Vec<String> = commands
+        .iter()
+        .map(|command| format!("cmd:{}:{}", command.ext_id, command.command_id))
+        .collect();
+    let command_scores = db::usage::score_map(&conn, "command", &command_keys)?;
+    sort_by_usage(&mut commands, &command_scores, |command| {
+        format!("cmd:{}:{}", command.ext_id, command.command_id)
+    });
+
+    // Extração de ícones pode custar alguns ms; fora do lock do banco.
+    drop(conn);
+    for app in &mut apps {
+        app.icon_path = platform::icons::data_url(&app.exe_path);
+    }
 
     Ok(SearchResults {
         apps,
@@ -380,6 +432,10 @@ pub fn search(
         commands,
         calculation: calculate(q),
     })
+}
+
+fn sort_by_usage<T>(items: &mut [T], scores: &HashMap<String, i64>, key: impl Fn(&T) -> String) {
+    items.sort_by_key(|item| std::cmp::Reverse(scores.get(&key(item)).copied().unwrap_or(0)));
 }
 
 #[tauri::command]
@@ -392,7 +448,12 @@ pub fn search_apps(
         .db
         .lock()
         .map_err(|_| AppError::Database("db lock envenenado".into()))?;
-    db::apps::search(&conn, &query, limit.unwrap_or(8))
+    let mut apps = db::apps::search(&conn, &query, limit.unwrap_or(8))?;
+    drop(conn);
+    for app in &mut apps {
+        app.icon_path = platform::icons::data_url(&app.exe_path);
+    }
+    Ok(apps)
 }
 
 #[tauri::command]
@@ -424,6 +485,87 @@ pub fn set_native_dialog_open(open: bool) {
 }
 
 #[tauri::command]
+pub fn open_extension_logs() -> AppResult<()> {
+    let dir = paths::extension_logs_dir();
+    std::fs::create_dir_all(&dir)?;
+    platform::launch(&dir.to_string_lossy())
+}
+
+#[tauri::command]
+pub fn notify(app: AppHandle, title: String, body: String) -> AppResult<()> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| AppError::Platform(e.to_string()))
+}
+
+#[tauri::command]
+pub fn touch_usage(state: State<AppState>, kind: String, key: String) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::usage::touch(&conn, &kind, &key)
+}
+
+#[tauri::command]
+pub fn copy_clipboard(state: State<AppState>, id: i64) -> AppResult<()> {
+    let entry = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::clipboard::get(&conn, id)?
+            .ok_or_else(|| AppError::NotFound("item de clipboard não encontrado".into()))?
+    };
+
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| AppError::Platform(e.to_string()))?;
+    if entry.kind == "image" {
+        let path = entry
+            .image_path
+            .ok_or_else(|| AppError::NotFound("imagem do clipboard não encontrada".into()))?;
+        let image = image::open(&path).map_err(|e| AppError::Platform(e.to_string()))?;
+        let rgba = image.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        clipboard
+            .set_image(arboard::ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+            })
+            .map_err(|e| AppError::Platform(e.to_string()))?;
+    } else {
+        clipboard
+            .set_text(entry.text.unwrap_or_default())
+            .map_err(|e| AppError::Platform(e.to_string()))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clipboard_image(state: State<AppState>, id: i64) -> AppResult<String> {
+    use base64::Engine as _;
+
+    let path = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        db::clipboard::get(&conn, id)?
+            .and_then(|entry| entry.image_path)
+            .ok_or_else(|| AppError::NotFound("imagem do clipboard não encontrada".into()))?
+    };
+    let bytes = std::fs::read(path)?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+#[tauri::command]
 pub fn copy_text(text: String) -> AppResult<()> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| AppError::Platform(e.to_string()))?;
     clipboard
@@ -448,6 +590,15 @@ pub fn delete_clipboard(state: State<AppState>, id: i64) -> AppResult<()> {
         .lock()
         .map_err(|_| AppError::Database("db lock envenenado".into()))?;
     db::clipboard::delete(&conn, id)
+}
+
+#[tauri::command]
+pub fn clear_unpinned_clipboard(state: State<AppState>) -> AppResult<usize> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::clipboard::clear_unpinned(&conn)
 }
 
 #[tauri::command]
@@ -492,39 +643,41 @@ pub fn rebuild_files_index(app: AppHandle, state: State<AppState>) -> AppResult<
 }
 
 #[tauri::command]
-pub fn get_status(app: AppHandle, state: State<AppState>) -> AppResult<StatusInfo> {
-    let cfg = state
-        .config
-        .lock()
-        .map_err(|_| AppError::Config("config lock envenenado".into()))?
-        .clone();
-
-    let (apps_indexed, files_indexed, clipboard_count, extensions_count) = {
-        let conn = state
-            .db
+pub async fn get_status(app: AppHandle, state: State<'_, AppState>) -> AppResult<StatusInfo> {
+    let (cfg, db_path) = {
+        let cfg = state
+            .config
             .lock()
-            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
-        let apps = conn
+            .map_err(|_| AppError::Config("config lock envenenado".into()))?
+            .clone();
+        let db_path = paths::db_path(&app)?;
+        (cfg, db_path)
+    };
+    let paths_info = paths_info(&app, &cfg)?;
+    let version = env!("CARGO_PKG_VERSION").to_string();
+
+    // Enumerar janelas e consultar o banco pode custar alguns milissegundos;
+    // mantém fora da thread da interface.
+    tauri::async_runtime::spawn_blocking(move || -> AppResult<StatusInfo> {
+        let conn = db::open(&db_path)?;
+        let apps_indexed = conn
             .query_row("SELECT COUNT(*) FROM apps_index", [], |row| {
                 row.get::<_, i64>(0)
             })
             .unwrap_or(0);
-        let files = db::files::count(&conn).unwrap_or(0);
-        let clips = db::clipboard::count(&conn).unwrap_or(0);
-        let exts = db::extensions::count(&conn).unwrap_or(0);
-        (apps, files, clips, exts)
-    };
-
-    Ok(StatusInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        apps_indexed,
-        files_indexed,
-        clipboard_count,
-        extensions_count,
-        open_windows: platform::windows::list_open_windows().len(),
-        win_hook_active: crate::core::win_hook::is_installed(),
-        paths: paths_info(&app, &cfg)?,
+        Ok(StatusInfo {
+            version,
+            apps_indexed,
+            files_indexed: db::files::count(&conn).unwrap_or(0),
+            clipboard_count: db::clipboard::count(&conn).unwrap_or(0),
+            extensions_count: db::extensions::count(&conn).unwrap_or(0),
+            open_windows: platform::windows::list_open_windows().len(),
+            win_hook_active: crate::core::win_hook::is_installed(),
+            paths: paths_info,
+        })
     })
+    .await
+    .map_err(|e| AppError::Platform(format!("falha ao consultar o status: {e}")))?
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -544,24 +697,33 @@ pub fn list_extensions(state: State<AppState>) -> AppResult<Vec<InstalledExtensi
 }
 
 #[tauri::command]
-pub fn install_extension(
+pub async fn install_extension(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     request: InstallRequest,
 ) -> AppResult<InstalledExtension> {
     let root = paths::extensions_dir(&app)?;
-    let manifest = match request.kind.as_str() {
-        "local" => extensions::install_from_dir(&root, std::path::Path::new(&request.value)),
-        "git" => extensions::install_from_git(&root, &request.value),
-        other => {
-            return Err(AppError::Config(format!(
-                "tipo de instalação desconhecido: {other}"
-            )));
-        }
-    }
+    let kind = request.kind;
+    let value = request.value;
+    let install_kind = kind.clone();
+    let install_value = value.clone();
+
+    // Clonar do Git pode levar segundos: não bloqueia a thread da interface.
+    let (manifest, destination) = tauri::async_runtime::spawn_blocking(move || {
+        let manifest = match install_kind.as_str() {
+            "local" => extensions::install_from_dir(&root, std::path::Path::new(&install_value)),
+            "git" => extensions::install_from_git(&root, &install_value),
+            other => {
+                return Err(format!("tipo de instalação desconhecido: {other}"));
+            }
+        }?;
+        let destination = root.join(extensions::folder_name(&manifest.id));
+        Ok((manifest, destination))
+    })
+    .await
+    .map_err(|e| AppError::Platform(format!("falha ao instalar extensão: {e}")))?
     .map_err(AppError::Platform)?;
 
-    let destination = root.join(extensions::folder_name(&manifest.id));
     {
         let conn = state
             .db
@@ -570,8 +732,8 @@ pub fn install_extension(
         db::extensions::upsert(
             &conn,
             &manifest,
-            &request.kind,
-            Some(&request.value),
+            &kind,
+            Some(&value),
             &destination.to_string_lossy(),
         )?;
     }
@@ -628,8 +790,8 @@ pub fn set_extension_permissions(
 }
 
 #[tauri::command]
-pub fn run_extension_command(
-    state: State<AppState>,
+pub async fn run_extension_command(
+    state: State<'_, AppState>,
     ext_id: String,
     command_id: String,
     args: Option<serde_json::Value>,
@@ -663,38 +825,51 @@ pub fn run_extension_command(
 
     let deno =
         extensions::runtime::find_deno(cfg.extensions.deno_path.as_deref()).ok_or_else(|| {
-            AppError::Platform(
-                "runtime Deno não encontrado. Instale em Configurações > Extensões.".into(),
-            )
+            AppError::Platform("runtime Deno não encontrado. Instale em 🧩 Extensões.".into())
         })?;
 
     let workspace = paths::expand(&cfg.workspace.path);
-    let outcome = extensions::runtime::run_command(
-        &deno,
-        &paths::runtime_dir(),
-        std::path::Path::new(&row.install_path),
-        &row.manifest,
-        &command_id,
-        args.unwrap_or(serde_json::Value::Null),
-        &row.granted,
-        Some(&workspace),
-    )
+    let runtime_dir = paths::runtime_dir();
+    let install_path = std::path::PathBuf::from(&row.install_path);
+    let manifest = row.manifest.clone();
+    let granted = row.granted.clone();
+    let args = args.unwrap_or(serde_json::Value::Null);
+
+    // A extensão pode levar até 20s (timeout do runner): executa fora da
+    // thread da interface para o launcher não congelar.
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        extensions::runtime::run_command(
+            &deno,
+            &runtime_dir,
+            &install_path,
+            &manifest,
+            &command_id,
+            args,
+            &granted,
+            Some(&workspace),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Platform(format!("falha ao executar a extensão: {e}")))?
     .map_err(AppError::Platform)?;
 
     if !outcome.ok {
-        return Err(AppError::Platform(
-            outcome.error.unwrap_or_else(|| "falha na extensão".into()),
-        ));
+        let hint = outcome
+            .log_path
+            .as_deref()
+            .map(|path| format!("\nLog: {path}"))
+            .unwrap_or_default();
+        return Err(AppError::Platform(format!(
+            "{}{hint}",
+            outcome.error.unwrap_or_else(|| "falha na extensão".into())
+        )));
     }
 
-    if let Some(toast) = outcome.toast {
-        return Ok(RunResult {
-            kind: "message".into(),
-            text: Some(toast),
-        });
-    }
-
+    // `ui.toast` acompanha a ação; antes ele fazia o host retornar cedo e
+    // descartava um `copy`/`open` pedido no mesmo comando.
+    let toast = outcome.toast;
     let result = outcome.result;
+
     if let Some(object) = result.as_object() {
         match object.get("type").and_then(|value| value.as_str()) {
             Some("copy") => {
@@ -716,6 +891,7 @@ pub fn run_extension_command(
                 return Ok(RunResult {
                     kind: "copy".into(),
                     text: Some(text),
+                    toast,
                 });
             }
             Some("open") => {
@@ -730,6 +906,7 @@ pub fn run_extension_command(
                 return Ok(RunResult {
                     kind: "opened".into(),
                     text: None,
+                    toast,
                 });
             }
             Some("message") => {
@@ -741,6 +918,7 @@ pub fn run_extension_command(
                 return Ok(RunResult {
                     kind: "message".into(),
                     text: Some(text),
+                    toast: None,
                 });
             }
             _ => {}
@@ -751,17 +929,27 @@ pub fn run_extension_command(
         return Ok(RunResult {
             kind: "message".into(),
             text: Some(text.to_string()),
+            toast: None,
+        });
+    }
+
+    if let Some(toast) = toast {
+        return Ok(RunResult {
+            kind: "message".into(),
+            text: Some(toast),
+            toast: None,
         });
     }
 
     Ok(RunResult {
         kind: "done".into(),
         text: None,
+        toast: None,
     })
 }
 
 #[tauri::command]
-pub fn runtime_status(state: State<AppState>) -> AppResult<RuntimeStatus> {
+pub async fn runtime_status(state: State<'_, AppState>) -> AppResult<RuntimeStatus> {
     let configured = state
         .config
         .lock()
@@ -769,14 +957,20 @@ pub fn runtime_status(state: State<AppState>) -> AppResult<RuntimeStatus> {
         .extensions
         .deno_path
         .clone();
-    let found = extensions::runtime::find_deno(configured.as_deref());
-    Ok(RuntimeStatus {
-        available: found.is_some(),
-        path: found.as_ref().map(|path| path.display().to_string()),
-        version: found
-            .as_ref()
-            .and_then(|path| extensions::runtime::version(path)),
+
+    // `deno --version` inicia um processo: nunca na thread da interface.
+    tauri::async_runtime::spawn_blocking(move || {
+        let found = extensions::runtime::find_deno(configured.as_deref());
+        RuntimeStatus {
+            available: found.is_some(),
+            path: found.as_ref().map(|path| path.display().to_string()),
+            version: found
+                .as_ref()
+                .and_then(|path| extensions::runtime::version(path)),
+        }
     })
+    .await
+    .map_err(|e| AppError::Platform(format!("falha ao consultar o runtime: {e}")))
 }
 
 #[tauri::command]
@@ -789,22 +983,26 @@ pub async fn ensure_runtime(state: State<'_, AppState>) -> AppResult<RuntimeStat
         .deno_path
         .clone();
 
-    let deno = tauri::async_runtime::spawn_blocking(move || {
-        extensions::runtime::ensure_deno(configured.as_deref())
+    let status = tauri::async_runtime::spawn_blocking(move || {
+        let deno = extensions::runtime::ensure_deno(configured.as_deref())?;
+        Ok::<RuntimeStatus, String>(RuntimeStatus {
+            available: true,
+            path: Some(deno.display().to_string()),
+            version: extensions::runtime::version(&deno),
+        })
     })
     .await
     .map_err(|e| AppError::Platform(e.to_string()))?
     .map_err(AppError::Platform)?;
 
-    Ok(RuntimeStatus {
-        available: true,
-        path: Some(deno.display().to_string()),
-        version: extensions::runtime::version(&deno),
-    })
+    Ok(status)
 }
 
 #[tauri::command]
-pub fn list_store(state: State<AppState>, url: Option<String>) -> AppResult<Vec<StoreItem>> {
+pub async fn list_store(
+    state: State<'_, AppState>,
+    url: Option<String>,
+) -> AppResult<Vec<StoreItem>> {
     let configured = state
         .config
         .lock()
@@ -815,15 +1013,25 @@ pub fn list_store(state: State<AppState>, url: Option<String>) -> AppResult<Vec<
     let target = url
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(configured);
-    let raw = fetch_text(&target).map_err(AppError::Platform)?;
-    let items: Vec<StoreItem> = serde_json::from_str(&raw)
-        .map_err(|e| AppError::Config(format!("índice da loja inválido: {e}")))?;
-    Ok(items)
+
+    // Download de índice da loja: fora da thread da interface.
+    tauri::async_runtime::spawn_blocking(move || -> AppResult<Vec<StoreItem>> {
+        let raw = fetch_text(&target).map_err(AppError::Platform)?;
+        serde_json::from_str(&raw)
+            .map_err(|e| AppError::Config(format!("índice da loja inválido: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Platform(format!("falha ao carregar a loja: {e}")))?
 }
 
 fn fetch_text(target: &str) -> Result<String, String> {
     if target.starts_with("http://") || target.starts_with("https://") {
-        let response = ureq::get(target).call().map_err(|e| e.to_string())?;
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
+            .build();
+        let response = agent.get(target).call().map_err(|e| e.to_string())?;
         response.into_string().map_err(|e| e.to_string())
     } else {
         let path = paths::expand(target);
@@ -906,12 +1114,20 @@ pub fn delete_window_layout(app: AppHandle, state: State<AppState>, id: i64) -> 
 }
 
 #[tauri::command]
-pub fn apply_window_layout(state: State<AppState>, id: i64) -> AppResult<ApplyResult> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
-    window_manager::apply_layout_by_id(&conn, id).map_err(AppError::Platform)
+pub fn apply_window_layout(
+    app: AppHandle,
+    state: State<AppState>,
+    id: i64,
+) -> AppResult<ApplyResult> {
+    let result = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+        window_manager::apply_layout_by_id(&conn, id).map_err(AppError::Platform)?
+    };
+    remember_layout(&app, state.inner(), id);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -996,6 +1212,9 @@ pub fn toggle_launcher(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn quit_app(app: AppHandle) {
+pub fn quit_app(app: AppHandle, state: State<AppState>) {
+    if let Ok(conn) = state.db.lock() {
+        db::checkpoint(&conn);
+    }
     app.exit(0);
 }

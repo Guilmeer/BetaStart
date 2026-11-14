@@ -67,6 +67,11 @@ pub fn run() {
                                             let _ = window_manager::apply_layout_by_id(
                                                 &conn, layout.id,
                                             );
+                                            commands::remember_layout(
+                                                app,
+                                                state.inner(),
+                                                layout.id,
+                                            );
                                             return;
                                         }
                                     }
@@ -80,13 +85,24 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Payloads/resultados de extensões que morreram no meio não se acumulam.
+            extensions::runtime::cleanup_temp_files(std::time::Duration::from_secs(24 * 3600));
+            extensions::runtime::cleanup_logs(100);
 
             let config_path = core::paths::config_path(&handle)?;
             let db_path = core::paths::db_path(&handle)?;
             let config = core::config::Config::load_or_default(&config_path)?;
             core::paths::ensure_workspace(&config.workspace.path)?;
+            if config.tray.start_on_boot {
+                if let Err(err) = platform::autostart::set(true) {
+                    eprintln!("[betastart] falha ao registrar inicialização automática: {err}");
+                }
+            }
 
             let conn = db::open(&db_path)?;
             // Indexação de apps é rápida e roda de forma síncrona.
@@ -128,6 +144,19 @@ pub fn run() {
                 window_watcher::start(db_path.clone());
             }
 
+            // Reaplica o último layout depois que o desktop assentou.
+            if config.windows.restore_last_layout {
+                if let Some(layout_id) = config.windows.last_layout_id {
+                    let restore_db = db_path.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        if let Ok(conn) = db::open(&restore_db) {
+                            let _ = window_manager::apply_layout_by_id(&conn, layout_id);
+                        }
+                    });
+                }
+            }
+
             // Indexação do workspace de memória + lembretes.
             let workspace_path = core::paths::expand(&config.workspace.path);
             let linked_roots = memory::LinkedRoot::from_config(&config.workspace);
@@ -149,9 +178,14 @@ pub fn run() {
             );
             reminder_watcher::start(handle.clone(), db_path.clone());
 
+            // API local usada pelo SDK das extensões (sempre em localhost).
+            let app_data = core::paths::app_data_dir(&handle)?;
+            if let Err(error) = extensions::api::start(app_data.clone()) {
+                eprintln!("[betastart] API de extensões indisponível: {error}");
+            }
+
             // Servidor MCP HTTP/SSE local.
             if config.mcp.enabled && config.mcp.http.enabled {
-                let app_data = core::paths::app_data_dir(&handle)?;
                 mcp::start_http(app_data, config.mcp.http.host.clone(), config.mcp.http.port);
             }
 
@@ -174,9 +208,15 @@ pub fn run() {
             commands::open_path,
             commands::set_native_dialog_open,
             commands::copy_text,
+            commands::copy_clipboard,
+            commands::clipboard_image,
+            commands::touch_usage,
+            commands::notify,
+            commands::open_extension_logs,
             commands::list_clipboard,
             commands::delete_clipboard,
             commands::pin_clipboard,
+            commands::clear_unpinned_clipboard,
             commands::list_open_windows,
             commands::rebuild_apps_index,
             commands::rebuild_files_index,
@@ -206,6 +246,7 @@ pub fn run() {
             memory_api::link_project,
             memory_api::unlink_project,
             memory_api::list_memory_files,
+            memory_api::get_backlinks,
             memory_api::read_note,
             memory_api::save_note,
             memory_api::create_note,
@@ -220,6 +261,7 @@ pub fn run() {
             mcp_api::mcp_create_client,
             mcp_api::mcp_list_clients,
             mcp_api::mcp_revoke_client,
+            mcp_api::mcp_audit,
             mcp_api::mcp_exe_path,
             commands::get_status,
             commands::show_launcher,
@@ -245,7 +287,17 @@ pub fn run() {
                     .map(|cfg| cfg.tray.hide_on_blur)
                     .unwrap_or(true);
                 if hide_on_blur {
-                    let _ = window.hide();
+                    // Perdas de foco momentâneas (um processo filho, um diálogo do
+                    // sistema, um ajuste de tamanho) não devem fechar o launcher.
+                    let window = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(180));
+                        if window.is_visible().unwrap_or(false)
+                            && !window.is_focused().unwrap_or(true)
+                        {
+                            let _ = window.hide();
+                        }
+                    });
                 }
             }
             _ => {}

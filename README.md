@@ -38,16 +38,36 @@ Para encerrar de vez, use **Sair** no menu da bandeja.
 npm run tauri build
 ```
 
+Com `createUpdaterArtifacts` ligado, o build de release precisa das chaves de
+assinatura (veja [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md)). Para facilitar:
+
+```powershell
+# build local; -Repo usuario/repo também aponta o updater para o GitHub
+powershell -ExecutionPolicy Bypass -File scripts\build-signed.ps1 -Repo seu-usuario/BetaStart
+```
+
+## Auto-update assinado
+
+O app usa `tauri-plugin-updater` com assinatura **minisign**: cada release é
+assinado com a chave privada e o app só instala pacotes cuja assinatura combine
+com a chave pública embutida. A tela **⚙ Configurações → Atualizações** verifica,
+baixa e instala novas versões.
+
+O guia completo (chaves, Secrets do GitHub, versão/tag, build local assinado e
+teste com servidor local) está em [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md).
+
 ## Como usar
 
 - **Alt + Espaço** abre/fecha o launcher.
 - Digite para buscar **apps**, **arquivos**, **clipboard**, comandos de extensões e
   **calculadora** (ex.: `12*8+3`).
-- **🔌 MCP**: servidor para IAs (stdio + HTTP/SSE) com tokens e escopos.
+- **🔌 MCP**: servidor para IAs (stdio + HTTP/SSE) com tokens e escopos, resources, prompts e auditoria.
 - **🧠 Memória & Tasks**: notas, projetos, busca, tasks com subtasks, lista/kanban e lembretes.
 - **🪟 Gerenciador de janelas**: salvar/aplicar layouts, regras por app e multi-monitor.
-- **⚙ Configurações**: trocar o atalho e o modo da tecla Win a qualquer momento.
+- **📋 Área de transferência**: histórico com filtro, fixar/excluir e limpar não fixados.
+- **⚙ Configurações**: atalho, tecla Win, tema, inicialização com o Windows, busca, clipboard, MCP e extensões.
 - **🧩 Extensões**: instalar/gerenciar extensões e o runtime Deno.
+- **Busca rápida na web**: `g`, `yt`, `gh`, `w`, `ddg` ou `maps` + termo.
 - **Esc** fecha; fechar a janela manda para a bandeja.
 
 ## Extensões
@@ -71,6 +91,34 @@ Exemplo pronto em [`examples/hello-extension`](./examples/hello-extension).
 
 Também é possível instalar via **URL Git** ou pela **Loja** (um `index.json`, remoto ou
 local — veja [`examples/store/index.json`](./examples/store/index.json)).
+
+### SDK
+
+Além de `registerCommand` e `ui`, o SDK oferece acesso às APIs do host (sujeito às
+permissões aprovadas no manifesto):
+
+```ts
+import { memory, projects, tasks, windows, search, clipboard } from "@betastart/sdk";
+
+const lista = await projects.list();
+const brief = await projects.brief("meu-projeto");
+const notas = await memory.search("decisão", { project: "meu-projeto" });
+const task = await tasks.create({ title: "Revisar layout", project: "meu-projeto" });
+const janelas = await windows.list();
+const resultados = await search.query("relatório");
+const texto = await clipboard.read();
+```
+
+- `memory`: `list`, `read`, `write`, `search`
+- `projects`: `list`, `create`, `link`, `unlink`, `brief`
+- `graph`: `get`
+- `tasks`: `list`, `create`, `createMany`, `update`, `delete`
+- `windows`: `list`, `moveResize`, `applyLayout`, `saveLayout`
+- `search`: `query`
+- `clipboard`: `write`, `read`
+
+Exemplo completo em [`examples/brain-extension`](./examples/brain-extension). O host
+valida cada chamada pelo token efêmero da execução e pelas permissões do manifesto.
 
 ## Memória & Tasks
 
@@ -201,6 +249,11 @@ Abra **🔌** na barra superior.
 `windows.list`, `windows.move_resize`, `windows.apply_layout`,
 `windows.save_layout`, `extensions.list`, `extensions.run`, `search.query`,
 `clipboard.list`, `settings.get`, `settings.set`.
+
+Também há **resources** (`resources/list` e `resources/read` expõem as notas/tasks como
+Markdown) e **prompts** prontos (`project-brief`, `plan-project`, `review-tasks` e
+`capture-note`). A tela 🔌 mostra as **últimas chamadas** (cliente, tool, sucesso/erro e
+detalhe) para diagnóstico.
 
 Respostas pensadas para gastar poucos tokens:
 
@@ -378,6 +431,24 @@ examples/              # extensão de exemplo + índice de loja
 - [x] Tela 🔌 MCP (criar/revogar tokens, escopos, snippet)
 - [x] CLI `betastart mcp-token "Nome"`
 - [x] Testes de initialize/tools/escopos/auth
+
+## Melhorias recentes
+
+- **Extensões**: API local com token efêmero, SDK completo (memória, projetos, tasks,
+  janelas, busca e clipboard), logs por execução, download atômico do Deno e cache de versão.
+- **Launcher**: ícones reais dos apps, resultados ordenados por frequência/recência,
+  ações rápidas de busca na web (`g`, `yt`, `gh`, `w`, `ddg`, `maps`) e badges por
+  extensão do arquivo.
+- **Clipboard**: histórico de texto e imagens, filtro, fixar/excluir, copiar de volta
+  (inclusive imagens) e limpeza de itens não fixados.
+- **Busca**: FTS5 real para arquivos e memória, com fallback por substring.
+- **Memória**: autosave, painel de backlinks (`[[...]]`) e nota diária.
+- **Windows**: seletor de janelas abertas ao criar regras e opção de reaplicar o último
+  layout ao iniciar.
+- **Configurações**: tema claro/escuro/automático, iniciar com o Windows, diretórios de
+  índice, clipboard, MCP e extensões.
+- **MCP**: resources, prompts e auditoria das últimas chamadas.
+- **Qualidade**: CI no GitHub Actions e workflow de release com instalador NSIS.
 
 ## Próximos passos
 

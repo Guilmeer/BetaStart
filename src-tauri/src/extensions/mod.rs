@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod api;
 pub mod runtime;
 
 pub const ALLOWED_PERMISSIONS: &[&str] = &[
@@ -131,6 +132,19 @@ pub fn install_from_dir(
     }
     let manifest = read_manifest(source)?;
     let destination = extensions_root.join(folder_name(&manifest.id));
+
+    // Evita copiar a pasta de instalação para dentro dela mesma (recursão infinita).
+    if let Ok(source_canonical) = dunce::canonicalize(source) {
+        let destination_canonical =
+            dunce::canonicalize(&destination).unwrap_or_else(|_| destination.clone());
+        if source_canonical == destination_canonical
+            || source_canonical.starts_with(&destination_canonical)
+            || destination_canonical.starts_with(&source_canonical)
+        {
+            return Err("a pasta de origem e o destino da instalação se sobrepõem".into());
+        }
+    }
+
     if destination.exists() {
         std::fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
     }
@@ -147,15 +161,24 @@ pub fn install_from_git(extensions_root: &Path, url: &str) -> Result<ExtensionMa
     ));
     let _ = std::fs::remove_dir_all(&temp);
 
-    let status = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", url])
+    let output = crate::platform::hidden_command("git")
+        .args(["clone", "--depth", "1", "--"])
+        .arg(url)
         .arg(&temp)
-        .status()
+        // Nunca deixa o Git abrir um prompt invisível esperando credenciais.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
         .map_err(|e| format!("git indisponível: {e}"))?;
 
-    if !status.success() {
+    if !output.status.success() {
         let _ = std::fs::remove_dir_all(&temp);
-        return Err("git clone falhou".into());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        return Err(if detail.is_empty() {
+            "git clone falhou".into()
+        } else {
+            format!("git clone falhou: {detail}")
+        });
     }
 
     let result = install_from_dir(extensions_root, &temp);

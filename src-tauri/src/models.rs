@@ -20,6 +20,7 @@ pub struct ClipEntry {
     pub id: i64,
     pub kind: String,
     pub text: Option<String>,
+    pub image_path: Option<String>,
     pub copied_at: i64,
     pub pinned: bool,
 }
@@ -66,6 +67,9 @@ pub struct InstalledExtension {
 pub struct RunResult {
     pub kind: String,
     pub text: Option<String>,
+    /// Mensagem de `ui.toast`; não substitui a ação (`copy`/`open`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toast: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,6 +298,18 @@ pub struct McpClient {
     pub created_at: i64,
     pub last_seen: Option<i64>,
     pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpAudit {
+    pub id: i64,
+    pub client_id: Option<i64>,
+    pub client_name: String,
+    pub tool: String,
+    pub ok: bool,
+    pub detail: Option<String>,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

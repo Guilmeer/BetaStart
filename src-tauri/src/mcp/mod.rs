@@ -72,7 +72,11 @@ pub fn handle(ctx: &mut McpContext, client: &McpClient, message: Value) -> Optio
     let result = match method {
         "initialize" => Some(json!({
             "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
+            "capabilities": {
+                "tools": {},
+                "resources": { "subscribe": false, "listChanged": false },
+                "prompts": { "listChanged": false }
+            },
             "serverInfo": {
                 "name": "betastart",
                 "version": env!("CARGO_PKG_VERSION")
@@ -87,19 +91,56 @@ pub fn handle(ctx: &mut McpContext, client: &McpClient, message: Value) -> Optio
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
             let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-            Some(match tools::call(ctx, client, name, arguments) {
-                Ok(text) => json!({
-                    "content": [{ "type": "text", "text": text }],
-                    "isError": false
-                }),
-                Err(error) => json!({
-                    "content": [{ "type": "text", "text": error }],
-                    "isError": true
-                }),
-            })
+            let outcome = tools::call(ctx, client, name, arguments);
+            let (ok, detail, result) = match outcome {
+                Ok(text) => (
+                    true,
+                    None,
+                    json!({
+                        "content": [{ "type": "text", "text": text }],
+                        "isError": false
+                    }),
+                ),
+                Err(error) => {
+                    let detail: String = error.chars().take(500).collect();
+                    (
+                        false,
+                        Some(detail),
+                        json!({
+                            "content": [{ "type": "text", "text": error }],
+                            "isError": true
+                        }),
+                    )
+                }
+            };
+            // Auditoria é best-effort: nunca derruba a chamada por causa do log.
+            let _ = crate::db::mcp::audit(
+                &ctx.db,
+                client.id,
+                &client.name,
+                name,
+                ok,
+                detail.as_deref(),
+            );
+            Some(result)
         }
-        "resources/list" => Some(json!({ "resources": [] })),
-        "prompts/list" => Some(json!({ "prompts": [] })),
+        "resources/list" => Some(list_resources(ctx)),
+        "resources/read" => {
+            let uri = params
+                .get("uri")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            Some(read_resource(ctx, uri))
+        }
+        "prompts/list" => Some(list_prompts()),
+        "prompts/get" => {
+            let name = params
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+            Some(get_prompt(name, &arguments))
+        }
         _ => {
             let id = id?;
             return Some(json!({
@@ -115,6 +156,168 @@ pub fn handle(ctx: &mut McpContext, client: &McpClient, message: Value) -> Optio
 
     let id = id?;
     result.map(|result| json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+}
+
+fn hex_encode(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn hex_decode(value: &str) -> Option<String> {
+    if value.len() % 2 != 0 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    for chunk in value.as_bytes().chunks(2) {
+        let text = std::str::from_utf8(chunk).ok()?;
+        bytes.push(u8::from_str_radix(text, 16).ok()?);
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn list_resources(ctx: &McpContext) -> Value {
+    let files = crate::db::memory::list_files(&ctx.db, None).unwrap_or_default();
+    let resources: Vec<Value> = files
+        .into_iter()
+        .map(|file| {
+            json!({
+                "uri": format!("betastart://memory/{}", hex_encode(&file.path)),
+                "name": if file.title.trim().is_empty() { file.name } else { file.title },
+                "description": format!("{} · {}", file.kind, file.project),
+                "mimeType": "text/markdown"
+            })
+        })
+        .collect();
+    json!({ "resources": resources })
+}
+
+fn read_resource(ctx: &McpContext, uri: &str) -> Value {
+    let Some(encoded) = uri.strip_prefix("betastart://memory/") else {
+        return json!({ "contents": [] });
+    };
+    let Some(path) = hex_decode(encoded) else {
+        return json!({ "contents": [] });
+    };
+    let path_buf = PathBuf::from(&path);
+    if crate::memory::ensure_allowed(&ctx.workspace, &ctx.linked, &path_buf).is_err() {
+        return json!({ "contents": [] });
+    }
+    let text = match std::fs::read_to_string(&path_buf) {
+        Ok(text) => text,
+        Err(error) => {
+            return json!({
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "text/plain",
+                    "text": format!("não foi possível ler o recurso: {error}")
+                }]
+            });
+        }
+    };
+    json!({
+        "contents": [{
+            "uri": uri,
+            "mimeType": "text/markdown",
+            "text": text
+        }]
+    })
+}
+
+fn list_prompts() -> Value {
+    json!({
+        "prompts": [
+            {
+                "name": "project-brief",
+                "description": "Resume um projeto usando o brief, as notas e as tasks abertas.",
+                "arguments": [
+                    { "name": "project", "description": "Slug do projeto", "required": true }
+                ]
+            },
+            {
+                "name": "plan-project",
+                "description": "Transforma um objetivo em um plano de tasks no projeto.",
+                "arguments": [
+                    { "name": "project", "description": "Slug do projeto", "required": true },
+                    { "name": "goal", "description": "Objetivo do plano", "required": true }
+                ]
+            },
+            {
+                "name": "review-tasks",
+                "description": "Revisa as tasks abertas e sugere prioridades.",
+                "arguments": [
+                    { "name": "project", "description": "Slug do projeto", "required": false }
+                ]
+            },
+            {
+                "name": "capture-note",
+                "description": "Salva uma decisão/nota curta na memória do projeto.",
+                "arguments": [
+                    { "name": "project", "description": "Slug do projeto", "required": false },
+                    { "name": "content", "description": "Conteúdo da nota", "required": true }
+                ]
+            }
+        ]
+    })
+}
+
+fn get_prompt(name: &str, args: &Value) -> Value {
+    let arg = |key: &str| {
+        args.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let project = {
+        let value = arg("project");
+        if value.is_empty() {
+            "global".to_string()
+        } else {
+            value
+        }
+    };
+    let (description, text) = match name {
+        "project-brief" => (
+            "Resumo do projeto",
+            format!(
+                "Use a tool project.brief com project=\"{project}\" e resuma em português: objetivo, estado atual, tasks abertas e próximos passos. Não invente informações que não estejam na memória."
+            ),
+        ),
+        "plan-project" => {
+            let goal = arg("goal");
+            (
+                "Plano de projeto",
+                format!(
+                    "Objetivo do projeto \"{project}\": {goal}. Leia project.brief e as tasks existentes. Depois crie um plano enxuto com tasks usando tasks.create_many, com prioridade e vencimento quando fizer sentido."
+                ),
+            )
+        }
+        "review-tasks" => (
+            "Revisão de tasks",
+            format!(
+                "Liste as tasks abertas do projeto \"{project}\" com tasks.list (status todo/in_progress), identifique o que está bloqueado ou atrasado e sugira as 3 próximas ações prioritárias."
+            ),
+        ),
+        "capture-note" => {
+            let content = arg("content");
+            (
+                "Captura de nota",
+                format!(
+                    "Salve a nota abaixo na memória do projeto \"{project}\" usando memory.write. Escolha um caminho e título descritivos dentro de projects/{project}/notes. Conteúdo:\n\n{content}"
+                ),
+            )
+        }
+        _ => ("Prompt desconhecido", String::new()),
+    };
+    json!({
+        "description": description,
+        "messages": [{
+            "role": "user",
+            "content": { "type": "text", "text": text }
+        }]
+    })
 }
 
 fn parse_token_arg(args: &[String]) -> Option<String> {
@@ -200,6 +403,12 @@ pub fn run_stdio() {
         "contexto carregado em {:?}",
         started.elapsed()
     ));
+
+    // O processo stdio também pode executar extension tools; a API local
+    // precisa existir neste processo, não só no app com janela.
+    if let Err(error) = crate::extensions::api::start(default_app_data_dir()) {
+        stdio_log(&format!("API de extensões indisponível: {error}"));
+    }
 
     let client = match crate::db::mcp::verify_token(&ctx.db, &token) {
         Ok(Some(client)) => client,
@@ -391,6 +600,43 @@ mod tests {
         )
         .expect("tools/call response");
         assert_eq!(call["result"]["isError"], false);
+
+        let resources = handle(
+            &mut ctx,
+            &client,
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": {} }),
+        )
+        .expect("resources/list response");
+        assert!(resources["result"]["resources"].is_array());
+
+        let prompts = handle(
+            &mut ctx,
+            &client,
+            json!({ "jsonrpc": "2.0", "id": 5, "method": "prompts/list", "params": {} }),
+        )
+        .expect("prompts/list response");
+        assert!(prompts["result"]["prompts"].as_array().unwrap().len() >= 4);
+
+        let prompt = handle(
+            &mut ctx,
+            &client,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "prompts/get",
+                "params": {
+                    "name": "project-brief",
+                    "arguments": { "project": "global" }
+                }
+            }),
+        )
+        .expect("prompts/get response");
+        assert!(
+            prompt["result"]["messages"][0]["content"]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("global")
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

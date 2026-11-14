@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Chaves de assinatura do updater (nunca commitar)
+*.key
+*.key.pub
+.keys/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

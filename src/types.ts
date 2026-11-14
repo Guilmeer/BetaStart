@@ -32,6 +32,7 @@ export interface ClipEntry {
   id: number;
   kind: string;
   text: string | null;
+  imagePath: string | null;
   copiedAt: number;
   pinned: boolean;
 }
@@ -96,6 +97,8 @@ export interface InstalledExtension {
 export interface RunResult {
   kind: string;
   text: string | null;
+  /** Mensagem de `ui.toast`; não substitui a ação executada. */
+  toast?: string | null;
 }
 
 export interface RuntimeStatus {
@@ -295,6 +298,16 @@ export interface McpClientCreated {
   client: McpClient;
 }
 
+export interface McpAudit {
+  id: number;
+  clientId: number | null;
+  clientName: string;
+  tool: string;
+  ok: boolean;
+  detail: string | null;
+  createdAt: number;
+}
+
 export type StartMenuMode = "ask" | "replace" | "off";
 
 export interface LinkedProjectConfig {
@@ -321,7 +334,11 @@ export interface Config {
     maxResults: number;
   };
   clipboard: { enabled: boolean; maxEntries: number };
-  windows: { autoApplyRules: boolean };
+  windows: {
+    autoApplyRules: boolean;
+    restoreLastLayout?: boolean;
+    lastLayoutId?: number | null;
+  };
   tray: { showOnClose: boolean; startOnBoot: boolean; hideOnBlur: boolean };
   mcp: {
     enabled: boolean;

@@ -34,6 +34,14 @@ fn reindex_with_state(state: &AppState) -> AppResult<usize> {
     memory::reindex_with_linked(&conn, &workspace, &linked)
 }
 
+/// Reindexação numa conexão própria, para rodar fora da thread da interface.
+fn reindex_with_db(db_path: &Path, workspace: &Path, linked: &[LinkedRoot]) -> AppResult<usize> {
+    let conn = db::open(db_path)?;
+    let count = memory::reindex_with_linked(&conn, workspace, linked)?;
+    db::checkpoint(&conn);
+    Ok(count)
+}
+
 fn ensure_markdown_path(path: &Path) -> AppResult<()> {
     let is_markdown = path
         .extension()
@@ -103,14 +111,20 @@ fn resolve_links(
 }
 
 #[tauri::command]
-pub fn reindex_memory(state: State<AppState>) -> AppResult<usize> {
-    reindex_with_state(state.inner())
+pub async fn reindex_memory(app: AppHandle, state: State<'_, AppState>) -> AppResult<usize> {
+    let (workspace, linked) = config_scope(state.inner())?;
+    let db_path = paths::db_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || reindex_with_db(&db_path, &workspace, &linked))
+        .await
+        .map_err(|e| AppError::Platform(format!("falha ao reindexar a memória: {e}")))?
 }
 
 #[tauri::command]
-pub fn list_projects(state: State<AppState>) -> AppResult<Vec<ProjectInfo>> {
+pub async fn list_projects(state: State<'_, AppState>) -> AppResult<Vec<ProjectInfo>> {
     let (workspace, linked) = config_scope(state.inner())?;
-    memory::list_projects(&workspace, &linked)
+    tauri::async_runtime::spawn_blocking(move || memory::list_projects(&workspace, &linked))
+        .await
+        .map_err(|e| AppError::Platform(format!("falha ao listar projetos: {e}")))?
 }
 
 #[tauri::command]
@@ -236,6 +250,74 @@ pub fn list_memory_files(
         .lock()
         .map_err(|_| AppError::Database("db lock envenenado".into()))?;
     db::memory::list_files(&conn, project.as_deref())
+}
+
+/// Notas/tasks que citam a nota atual via `[[link]]`.
+#[tauri::command]
+pub fn get_backlinks(state: State<AppState>, path: String) -> AppResult<Vec<MemoryFile>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+
+    let target_title: Option<String> = conn
+        .query_row(
+            "SELECT title FROM memory_index WHERE file_path = ?1",
+            rusqlite::params![path],
+            |row| row.get(0),
+        )
+        .ok();
+    let target_title = target_title
+        .map(|title| title.trim().to_lowercase())
+        .filter(|title| !title.is_empty());
+    let stem = Path::new(&path)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().trim().to_lowercase())
+        .filter(|stem| !stem.is_empty());
+
+    let mut stmt = conn.prepare(
+        "SELECT file_path, kind, title, project, tags, COALESCE(links, '[]')
+           FROM memory_index
+          WHERE file_path != ?1 AND links IS NOT NULL",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![path], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
+
+    let mut out = Vec::new();
+    for row in rows {
+        let (file_path, kind, title, project, tags, links) = row?;
+        let links: Vec<String> = serde_json::from_str(&links).unwrap_or_default();
+        let matches = links.iter().any(|label| {
+            let label = label.trim().to_lowercase();
+            !label.is_empty()
+                && (target_title.as_deref() == Some(label.as_str())
+                    || stem.as_deref() == Some(label.as_str()))
+        });
+        if !matches {
+            continue;
+        }
+        out.push(MemoryFile {
+            name: Path::new(&file_path)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            path: file_path,
+            kind,
+            title,
+            project,
+            tags: serde_json::from_str(&tags).unwrap_or_default(),
+        });
+    }
+    out.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
+    Ok(out)
 }
 
 #[tauri::command]
@@ -436,13 +518,15 @@ pub fn search_memory(
 }
 
 #[tauri::command]
-pub fn get_graph(state: State<AppState>, project: Option<String>) -> AppResult<Graph> {
+pub async fn get_graph(app: AppHandle, project: Option<String>) -> AppResult<Graph> {
     let project = project.filter(|value| value != "all");
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
-    crate::graph::build_graph(&conn, project.as_deref())
+    let db_path = paths::db_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open(&db_path)?;
+        crate::graph::build_graph(&conn, project.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Platform(format!("falha ao montar o grafo: {e}")))?
 }
 
 #[tauri::command]
