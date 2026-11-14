@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { useI18n } from "./i18n";
 import type { ClipEntry } from "./types";
 
-function preview(item: ClipEntry): string {
-  if (item.kind === "image") return "Imagem copiada";
+function preview(
+  item: ClipEntry,
+  t: (key: string) => string,
+): string {
+  if (item.kind === "image") return t("Copied image");
   const value = (item.text ?? "").replace(/\s+/g, " ").trim();
-  if (!value) return "(vazio)";
+  if (!value) return t("(empty)");
   return value.length > 220 ? `${value.slice(0, 220)}…` : value;
 }
 
-function formatDate(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleString();
+function formatDate(timestamp: number, locale: string): string {
+  return new Date(timestamp * 1000).toLocaleString(locale);
 }
 
 function ClipboardThumb({ id }: { id: number }) {
+  const { t } = useI18n();
   const [src, setSrc] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -34,11 +39,11 @@ function ClipboardThumb({ id }: { id: number }) {
   if (!open) {
     return (
       <button className="secondary" onClick={() => setOpen(true)}>
-        Mostrar imagem
+        {t("Show image")}
       </button>
     );
   }
-  if (!src) return <span className="field-hint">Carregando imagem…</span>;
+  if (!src) return <span className="field-hint">{t("Loading image…")}</span>;
   return <img className="clipboard-image-thumb" src={src} alt="Clipboard" />;
 }
 
@@ -49,6 +54,7 @@ export function Clipboard({
   onBack: () => void;
   onChanged?: () => void;
 }) {
+  const { t, locale } = useI18n();
   const [items, setItems] = useState<ClipEntry[]>([]);
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -95,7 +101,7 @@ export function Clipboard({
   const copy = async (item: ClipEntry) => {
     try {
       await api.copyClipboard(item.id);
-      setMessage("Copiado para a área de transferência.");
+      setMessage(t("Copied to the clipboard."));
     } catch (error) {
       setMessage(String(error));
     }
@@ -103,29 +109,29 @@ export function Clipboard({
 
   const clearUnpinned = () => {
     const confirmed = window.confirm(
-      "Remover todos os itens não fixados do histórico?",
+      t("Remove all unpinned items from history?"),
     );
     if (!confirmed) return;
     void run(
       () => api.clearUnpinnedClipboard(),
-      "Histórico não fixado removido.",
+      t("Unpinned history removed."),
     );
   };
 
   return (
     <section className="clipboard-screen">
       <div className="ext-header">
-        <h1>Área de transferência</h1>
+        <h1>{t("Clipboard")}</h1>
         <div className="inline">
           <button
             className="secondary"
             disabled={busy}
             onClick={() => void refresh()}
           >
-            Atualizar
+            {t("Refresh")}
           </button>
           <button className="secondary" onClick={onBack}>
-            Voltar
+            {t("Back")}
           </button>
         </div>
       </div>
@@ -133,7 +139,7 @@ export function Clipboard({
       <div className="inline">
         <input
           className="text-input"
-          placeholder="Filtrar histórico…"
+          placeholder={t("Filter history…")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           spellCheck={false}
@@ -143,17 +149,18 @@ export function Clipboard({
           disabled={busy}
           onClick={clearUnpinned}
         >
-          Limpar não fixados
+          {t("Clear unpinned")}
         </button>
       </div>
 
       <span className="field-hint">
-        {filtered.length} item(ns) · itens fixados ficam no topo e não são
-        removidos pelo limite automático.
+        {t("{count} item(s) · pinned items stay at the top and are not removed by the automatic limit.", {
+          count: filtered.length,
+        })}
       </span>
 
       {filtered.length === 0 && (
-        <p className="field-hint">Nenhum item encontrado.</p>
+        <p className="field-hint">{t("No items found.")}</p>
       )}
 
       {filtered.map((item) => (
@@ -163,16 +170,16 @@ export function Clipboard({
               {item.kind === "image" ? (
                 <ClipboardThumb id={item.id} />
               ) : (
-                <div className="clipboard-preview">{preview(item)}</div>
+                <div className="clipboard-preview">{preview(item, t)}</div>
               )}
               <div className="field-hint">
-                {item.kind} · {formatDate(item.copiedAt)}
-                {item.pinned ? " · fixado" : ""}
+                {t(item.kind)} · {formatDate(item.copiedAt, locale)}
+                {item.pinned ? ` · ${t("pinned")}` : ""}
               </div>
             </div>
             <div className="ext-actions">
               <button className="secondary" onClick={() => void copy(item)}>
-                Copiar
+                {t("Copy")}
               </button>
               {item.imagePath && (
                 <button
@@ -183,7 +190,7 @@ export function Clipboard({
                       .catch((error) => setMessage(String(error)))
                   }
                 >
-                  Abrir
+                  {t("Open")}
                 </button>
               )}
               <button
@@ -192,11 +199,11 @@ export function Clipboard({
                 onClick={() =>
                   void run(
                     () => api.pinClipboard(item.id, !item.pinned),
-                    item.pinned ? "Item desafixado." : "Item fixado.",
+                    item.pinned ? t("Item unpinned.") : t("Item pinned."),
                   )
                 }
               >
-                {item.pinned ? "Desafixar" : "Fixar"}
+                {item.pinned ? t("Unpin") : t("Pin")}
               </button>
               <button
                 className="secondary"
@@ -204,11 +211,11 @@ export function Clipboard({
                 onClick={() =>
                   void run(
                     () => api.deleteClipboard(item.id),
-                    "Item removido.",
+                    t("Item removed."),
                   )
                 }
               >
-                Excluir
+                {t("Delete")}
               </button>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { useI18n } from "./i18n";
 import type {
   McpAudit,
   McpClient,
@@ -17,15 +18,16 @@ const SCOPES = [
 ] as const;
 
 const SCOPE_LABEL: Record<string, string> = {
-  memory: "memória",
-  tasks: "tasks",
-  windows: "janelas",
-  extensions: "extensões",
-  search: "busca",
-  settings: "settings",
+  memory: "Memory",
+  tasks: "Tasks",
+  windows: "Windows",
+  extensions: "Extensions",
+  search: "Search",
+  settings: "Settings",
 };
 
 export function Mcp({ onBack }: { onBack: () => void }) {
+  const { t, locale } = useI18n();
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [clients, setClients] = useState<McpClient[]>([]);
   const [audit, setAudit] = useState<McpAudit[]>([]);
@@ -79,7 +81,7 @@ export function Mcp({ onBack }: { onBack: () => void }) {
     setMessage(null);
     try {
       const result = await api.mcpCreateClient(
-        name.trim() || "Cliente MCP",
+        name.trim() || t("MCP client"),
         scopes,
       );
       setCreated(result);
@@ -116,7 +118,7 @@ export function Mcp({ onBack }: { onBack: () => void }) {
   const copy = async (text: string) => {
     try {
       await api.copyText(text);
-      setMessage("Copiado para a área de transferência.");
+      setMessage(t("Copied to the clipboard."));
     } catch (error) {
       setMessage(String(error));
     }
@@ -147,25 +149,28 @@ export function Mcp({ onBack }: { onBack: () => void }) {
         <h1>MCP</h1>
         <div className="inline">
           <button className="secondary" onClick={() => void refresh()}>
-            Atualizar
+            {t("Refresh")}
           </button>
           <button className="secondary" onClick={onBack}>
-            Voltar
+            {t("Back")}
           </button>
         </div>
       </div>
 
       <div className="ext-card">
         <div className="ext-card-row">
-          <strong>Servidor</strong>
+          <strong>{t("Server")}</strong>
           <span className={status?.running ? "ok" : "warn"}>
-            {status?.running ? "HTTP/SSE ativo" : "HTTP/SSE inativo"}
+            {status?.running ? t("HTTP/SSE active") : t("HTTP/SSE inactive")}
           </span>
         </div>
         <div className="field-hint">
           {status
-            ? `${httpUrl} · ${status.clients} cliente(s) ativo(s)`
-            : "carregando…"}
+            ? t("{url} · {count} active client(s)", {
+                url: httpUrl,
+                count: status.clients,
+              })
+            : t("loading…")}
         </div>
         <div className="field-hint">
           stdio: <code>betastart mcp --token &lt;token&gt;</code>
@@ -174,30 +179,28 @@ export function Mcp({ onBack }: { onBack: () => void }) {
 
       <div className="ext-card">
         <div className="ext-card-row">
-          <strong>Log de diagnóstico</strong>
+          <strong>{t("Diagnostic log")}</strong>
           <button
             className="secondary"
             disabled={!logPath}
             onClick={() => void openLog()}
           >
-            Abrir
+            {t("Open")}
           </button>
         </div>
         <div className="field-hint">
-          <code>{logPath || "carregando…"}</code>
+          <code>{logPath || t("loading…")}</code>
         </div>
         <div className="field-hint">
-          Se uma conexão cair, o log mostra se o processo saiu sozinho (EOF) ou
-          foi encerrado pelo cliente. Defina <code>BETASTART_MCP_TRACE=1</code>{" "}
-          para registrar cada método.
+          {t("If a connection drops, the log shows whether the process exited on its own (EOF) or was terminated by the client. Set BETASTART_MCP_TRACE=1 to log every method.")}
         </div>
       </div>
 
-      <h2>Criar cliente / token</h2>
+      <h2>{t("Create client / token")}</h2>
       <div className="field">
         <input
           className="text-input"
-          placeholder="Nome do cliente (ex.: Claude Desktop)"
+          placeholder={t("Client name (e.g. Claude Desktop)")}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
@@ -218,30 +221,30 @@ export function Mcp({ onBack }: { onBack: () => void }) {
           disabled={busy || scopes.length === 0}
           onClick={() => void create()}
         >
-          Gerar token
+          {t("Generate token")}
         </button>
       </div>
 
       {created && (
         <div className="ext-card">
           <div className="ext-card-row">
-            <strong>Token de {created.client.name}</strong>
+            <strong>{t("Token for {name}", { name: created.client.name })}</strong>
             <button
               className="secondary"
               onClick={() => void copy(created.token)}
             >
-              Copiar
+              {t("Copy")}
             </button>
           </div>
           <div className="field-hint">
-            Guarde agora — o token não será exibido novamente.
+            {t("Save it now — the token will not be shown again.")}
           </div>
           <code className="token-box">{created.token}</code>
 
           <div className="ext-card-row">
-            <strong>Config (stdio)</strong>
+            <strong>{t("Config (stdio)")}</strong>
             <button className="secondary" onClick={() => void copy(snippet)}>
-              Copiar
+              {t("Copy")}
             </button>
           </div>
           <pre className="snippet">{snippet}</pre>
@@ -251,9 +254,9 @@ export function Mcp({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      <h2>Clientes</h2>
+      <h2>{t("Clients")}</h2>
       {clients.length === 0 && (
-        <p className="field-hint">Nenhum cliente criado.</p>
+        <p className="field-hint">{t("No clients created.")}</p>
       )}
       {clients.map((client) => (
         <div className="ext-card" key={client.id}>
@@ -261,17 +264,21 @@ export function Mcp({ onBack }: { onBack: () => void }) {
             <div>
               <strong>{client.name}</strong>{" "}
               <span className={client.revoked ? "warn" : "ok"}>
-                {client.revoked ? "revogado" : "ativo"}
+                {client.revoked ? t("revoked") : t("active")}
               </span>
               <div className="field-hint">
                 {client.scopes.length > 0
-                  ? client.scopes.join(", ")
-                  : "sem escopos"}
+                  ? client.scopes.map((scope) => t(SCOPE_LABEL[scope] ?? scope)).join(", ")
+                  : t("no scopes")}
               </div>
               <div className="field-hint">
-                criado {new Date(client.createdAt * 1000).toLocaleString()}
+                {t("created {date}", {
+                  date: new Date(client.createdAt * 1000).toLocaleString(locale),
+                })}
                 {client.lastSeen
-                  ? ` · visto ${new Date(client.lastSeen * 1000).toLocaleString()}`
+                  ? ` · ${t("seen {date}", {
+                      date: new Date(client.lastSeen * 1000).toLocaleString(locale),
+                    })}`
                   : ""}
               </div>
             </div>
@@ -281,16 +288,16 @@ export function Mcp({ onBack }: { onBack: () => void }) {
                 disabled={busy}
                 onClick={() => void revoke(client)}
               >
-                Revogar
+                {t("Revoke")}
               </button>
             )}
           </div>
         </div>
       ))}
 
-      <h2>Últimas chamadas</h2>
+      <h2>{t("Recent calls")}</h2>
       {audit.length === 0 && (
-        <p className="field-hint">Nenhuma chamada registrada ainda.</p>
+        <p className="field-hint">{t("No calls recorded yet.")}</p>
       )}
       {audit.map((entry) => (
         <div className="ext-card" key={entry.id}>
@@ -298,11 +305,11 @@ export function Mcp({ onBack }: { onBack: () => void }) {
             <div>
               <strong>{entry.tool}</strong>{" "}
               <span className={entry.ok ? "ok" : "warn"}>
-                {entry.ok ? "ok" : "erro"}
+                {entry.ok ? "ok" : t("error")}
               </span>
               <div className="field-hint">
                 {entry.clientName} ·{" "}
-                {new Date(entry.createdAt * 1000).toLocaleString()}
+                {new Date(entry.createdAt * 1000).toLocaleString(locale)}
               </div>
               {entry.detail && (
                 <div className="field-hint">{entry.detail}</div>

@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { useI18n } from "./i18n";
 
 interface Props {
   children: ReactNode;
@@ -8,9 +9,44 @@ interface State {
   error: Error | null;
 }
 
+function ErrorFallback({
+  error,
+  onRetry,
+}: {
+  error: Error;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="launcher">
+      <div className="crash">
+        <h1>{t("Something went wrong on this screen")}</h1>
+        <p>
+          {t("Beta Start is still running. Reload the interface to return to the launcher.")}
+        </p>
+        <code className="crash-detail">{error.message}</code>
+        <div className="settings-actions">
+          <button
+            className="primary"
+            onClick={() => window.location.reload()}
+          >
+            {t("Reload")}
+          </button>
+          <button className="secondary" onClick={onRetry}>
+            {t("Try again")}
+          </button>
+        </div>
+        <p className="field-hint">
+          {t("If the problem continues, open an issue with the message above.")}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /**
- * Evita que um erro de renderização deixe a janela em branco (e o app
- * aparentemente "fechado"). Mostra o erro e permite recarregar a interface.
+ * Prevents a render error from leaving a blank window (and the app looking
+ * closed). Shows the error and lets the user reload the interface.
  */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
@@ -29,33 +65,10 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="launcher">
-        <div className="crash">
-          <h1>Algo deu errado nesta tela</h1>
-          <p>
-            O Beta Start continua aberto. Recarregue a interface para voltar ao
-            launcher.
-          </p>
-          <code className="crash-detail">{this.state.error.message}</code>
-          <div className="settings-actions">
-            <button
-              className="primary"
-              onClick={() => window.location.reload()}
-            >
-              Recarregar
-            </button>
-            <button
-              className="secondary"
-              onClick={() => this.setState({ error: null })}
-            >
-              Tentar novamente
-            </button>
-          </div>
-          <p className="field-hint">
-            Se o problema continuar, abra uma issue com a mensagem acima.
-          </p>
-        </div>
-      </div>
+      <ErrorFallback
+        error={this.state.error}
+        onRetry={() => this.setState({ error: null })}
+      />
     );
   }
 }

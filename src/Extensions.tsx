@@ -1,24 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { useI18n } from "./i18n";
 import type { InstalledExtension, RuntimeStatus, StoreItem } from "./types";
 
-function runtimeLabel(loading: boolean, runtime: RuntimeStatus | null): string {
-  if (loading) return "verificando…";
-  if (!runtime) return "erro ao verificar";
-  return runtime.available ? runtime.version ?? "disponível" : "ausente";
+function runtimeLabel(
+  loading: boolean,
+  runtime: RuntimeStatus | null,
+  t: (key: string) => string,
+): string {
+  if (loading) return t("checking…");
+  if (!runtime) return t("could not check");
+  return runtime.available ? runtime.version ?? t("available") : t("missing");
 }
 
 const PERMISSION_HINTS: Record<string, string> = {
-  "fs:read": "ler arquivos do workspace",
-  "fs:write": "gravar arquivos no workspace",
-  network: "acessar a internet",
-  shell: "executar programas",
-  "clipboard:read": "ler a área de transferência",
-  "clipboard:write": "gravar na área de transferência",
-  memory: "ler/gravar na memória",
-  tasks: "ler/gravar tasks",
-  windows: "listar/mover janelas",
-  search: "usar a busca do launcher",
+  "fs:read": "read files in the workspace",
+  "fs:write": "write files in the workspace",
+  network: "access the internet",
+  shell: "run programs",
+  "clipboard:read": "read the clipboard",
+  "clipboard:write": "write to the clipboard",
+  memory: "read/write memory",
+  tasks: "read/write tasks",
+  windows: "list/move windows",
+  search: "use the launcher search",
 };
 
 export function Extensions({
@@ -28,6 +33,7 @@ export function Extensions({
   onBack: () => void;
   onChanged?: () => void;
 }) {
+  const { t } = useI18n();
   const [items, setItems] = useState<InstalledExtension[]>([]);
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [store, setStore] = useState<StoreItem[]>([]);
@@ -117,7 +123,7 @@ export function Extensions({
   const install = (kind: "local" | "git", value: string) =>
     run(
       () => api.installExtension({ kind, value }),
-      "Extensão instalada. Aprove as permissões abaixo.",
+      t("Extension installed. Approve the permissions below."),
     );
 
   const loadStore = async () => {
@@ -134,7 +140,9 @@ export function Extensions({
           await api.setConfig({ extensions: { storeUrl: url } });
         } catch (error) {
           setMessage(
-            `Loja carregada, mas não foi possível salvar a URL: ${String(error)}`,
+            t("Store loaded, but the URL could not be saved: {error}", {
+              error: String(error),
+            }),
           );
           return;
         }
@@ -142,8 +150,8 @@ export function Extensions({
 
       setMessage(
         list.length > 0
-          ? `${list.length} extensão(ões) encontrada(s) na loja.`
-          : "A loja está vazia.",
+          ? t("{count} extension(s) found in the store.", { count: list.length })
+          : t("The store is empty."),
       );
     } catch (error) {
       setMessage(String(error));
@@ -171,20 +179,20 @@ export function Extensions({
   return (
     <section className="extensions">
       <div className="ext-header">
-        <h1>Extensões</h1>
+        <h1>{t("Extensions")}</h1>
         <div className="inline">
           <button
             className="secondary"
             disabled={busy}
             onClick={() => void reload()}
           >
-            Atualizar
+            {t("Refresh")}
           </button>
           <button className="secondary" onClick={() => void openLogs()}>
-            Logs
+            {t("Logs")}
           </button>
           <button className="secondary" onClick={onBack}>
-            Voltar
+            {t("Back")}
           </button>
         </div>
       </div>
@@ -192,30 +200,30 @@ export function Extensions({
       <div className="ext-card">
         <div className="ext-card-row">
           <div>
-            <strong>Runtime Deno</strong>
+            <strong>{t("Deno runtime")}</strong>
             <div className="field-hint">
-              {runtime?.path ?? "Não encontrado no sistema."}
+              {runtime?.path ?? t("Not found on the system.")}
             </div>
           </div>
           <span className={runtime?.available ? "ok" : "warn"}>
-            {runtimeLabel(loading, runtime)}
+            {runtimeLabel(loading, runtime, t)}
           </span>
         </div>
         {runtime && !runtime.available && (
           <button
             className="primary"
             disabled={busy}
-            onClick={() => void run(() => api.ensureRuntime(), "Runtime Deno pronto.")}
+            onClick={() => void run(() => api.ensureRuntime(), t("Deno runtime ready."))}
           >
-            Instalar runtime Deno (~30 MB)
+            {t("Install Deno runtime (~30 MB)")}
           </button>
         )}
       </div>
 
-      <h2>Instaladas</h2>
-      {loading && <p className="field-hint">Carregando…</p>}
+      <h2>{t("Installed")}</h2>
+      {loading && <p className="field-hint">{t("Loading…")}</p>}
       {!loading && items.length === 0 && (
-        <p className="field-hint">Nenhuma extensão instalada ainda.</p>
+        <p className="field-hint">{t("No extensions installed yet.")}</p>
       )}
       {items.map((ext) => {
         const permissions = ext.permissions ?? [];
@@ -241,20 +249,20 @@ export function Extensions({
                     )
                   }
                 />
-                ativa
+                {t("active (extension)")}
               </label>
             </div>
 
             {commands.length > 0 && (
               <div className="field-hint">
-                {commands.length} comando(s):{" "}
+                {t("{count} command(s):", { count: commands.length })}{" "}
                 {commands.map((command) => command.title).join(" · ")}
               </div>
             )}
 
             <div className="ext-perms">
               {permissions.length === 0 && (
-                <span className="field-hint">Sem permissões.</span>
+                <span className="field-hint">{t("No permissions.")}</span>
               )}
               {permissions.map((permission) => (
                 <span
@@ -262,7 +270,11 @@ export function Extensions({
                   className={
                     granted.includes(permission) ? "perm granted" : "perm pending"
                   }
-                  title={PERMISSION_HINTS[permission] ?? permission}
+                  title={
+                    PERMISSION_HINTS[permission]
+                      ? t(PERMISSION_HINTS[permission])
+                      : permission
+                  }
                 >
                   {permission}
                 </span>
@@ -277,11 +289,11 @@ export function Extensions({
                   onClick={() =>
                     void run(
                       () => api.setExtensionPermissions(ext.id, permissions),
-                      "Permissões aprovadas.",
+                      t("Permissions approved."),
                     )
                   }
                 >
-                  Aprovar permissões
+                  {t("Approve permissions")}
                 </button>
               )}
               <button
@@ -289,39 +301,41 @@ export function Extensions({
                 disabled={busy || !ext.installPath}
                 onClick={() => void openFolder(ext)}
               >
-                Abrir pasta
+                {t("Open folder")}
               </button>
               <button
                 className="secondary"
                 disabled={busy}
                 onClick={() => {
                   const confirmed = window.confirm(
-                    `Desinstalar "${ext.name}"?\n\nA pasta da extensão será removida do disco.`,
+                    t('Uninstall "{name}"?\n\nThe extension folder will be removed from disk.', {
+                      name: ext.name,
+                    }),
                   );
                   if (!confirmed) return;
                   void run(
                     () => api.uninstallExtension(ext.id),
-                    "Extensão removida.",
+                    t("Extension removed."),
                   );
                 }}
               >
-                Desinstalar
+                {t("Uninstall")}
               </button>
             </div>
           </div>
         );
       })}
 
-      <h2>Instalar</h2>
+      <h2>{t("Install")}</h2>
 
       <label className="field">
-        <span className="field-label">Pasta local</span>
+        <span className="field-label">{t("Local folder")}</span>
         <div className="inline">
           <input
             className="text-input"
             value={localPath}
             onChange={(event) => setLocalPath(event.target.value)}
-            placeholder="C:\caminho\da\extensao"
+            placeholder={t("C:\\path\\to\\extension")}
             spellCheck={false}
           />
           <button
@@ -329,22 +343,22 @@ export function Extensions({
             disabled={busy || !localPath.trim()}
             onClick={() => void install("local", localPath.trim())}
           >
-            Instalar
+            {t("Install")}
           </button>
         </div>
         <span className="field-hint">
-          A pasta precisa conter um <code>extension.json</code>.
+          {t("The folder must contain an extension.json file.")}
         </span>
       </label>
 
       <label className="field">
-        <span className="field-label">Repositório Git</span>
+        <span className="field-label">{t("Git repository")}</span>
         <div className="inline">
           <input
             className="text-input"
             value={gitUrl}
             onChange={(event) => setGitUrl(event.target.value)}
-            placeholder="https://github.com/usuario/extensao"
+            placeholder={t("https://github.com/user/extension")}
             spellCheck={false}
           />
           <button
@@ -352,22 +366,22 @@ export function Extensions({
             disabled={busy || !gitUrl.trim()}
             onClick={() => void install("git", gitUrl.trim())}
           >
-            Instalar
+            {t("Install")}
           </button>
         </div>
       </label>
 
-      <h2>Loja</h2>
+      <h2>{t("Store")}</h2>
       <div className="inline">
         <input
           className="text-input"
           value={storeUrl}
           onChange={(event) => setStoreUrl(event.target.value)}
-          placeholder="URL do index.json ou caminho local"
+          placeholder={t("index.json URL or local path")}
           spellCheck={false}
         />
         <button className="secondary" disabled={busy} onClick={() => void loadStore()}>
-          Carregar
+          {t("Load")}
         </button>
       </div>
 
@@ -391,11 +405,11 @@ export function Extensions({
                       kind: item.source,
                       value: item.url,
                     }),
-                  "Extensão instalada. Aprove as permissões.",
+                  t("Extension installed. Approve the permissions."),
                 )
               }
             >
-              Instalar
+              {t("Install")}
             </button>
           </div>
         </div>

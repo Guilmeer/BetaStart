@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { HotkeyInput } from "./HotkeyInput";
+import { useI18n } from "./i18n";
 import type {
   MonitorInfo,
   WindowInfo,
@@ -9,6 +10,7 @@ import type {
 } from "./types";
 
 export function WindowManager({ onBack }: { onBack: () => void }) {
+  const { t } = useI18n();
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [layouts, setLayouts] = useState<WindowLayout[]>([]);
   const [rules, setRules] = useState<WindowRule[]>([]);
@@ -85,7 +87,10 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
       setLayoutName("");
       setLayoutHotkey("");
       setMessage(
-        `Layout "${layout.name}" salvo com ${layout.slots.length} janela(s).`,
+        t('Layout "{name}" saved with {count} window(s).', {
+          name: layout.name,
+          count: layout.slots.length,
+        }),
       );
     });
 
@@ -93,9 +98,9 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
     run(async () => {
       const result = await api.applyWindowLayout(layout.id);
       setMessage(
-        `Layout aplicado: ${result.moved} janela(s)` +
+        t("Layout applied: {moved} window(s)", { moved: result.moved }) +
           (result.missed.length
-            ? `; não encontradas: ${result.missed.join(", ")}`
+            ? `; ${t("not found: {list}", { list: result.missed.join(", ") })}`
             : "."),
       );
     });
@@ -104,9 +109,9 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
     run(async () => {
       const result = await api.applyWindowRules();
       setMessage(
-        `Regras aplicadas: ${result.moved} janela(s)` +
+        t("Rules applied: {moved} window(s)", { moved: result.moved }) +
           (result.missed.length
-            ? `; sem janela: ${result.missed.join(", ")}`
+            ? `; ${t("no window: {list}", { list: result.missed.join(", ") })}`
             : "."),
       );
     });
@@ -140,55 +145,56 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
       });
       setRuleName("");
       setRuleApp("");
-      setMessage("Regra salva.");
+      setMessage(t("Rule saved."));
     });
 
   return (
     <section className="windows">
       <div className="ext-header">
-        <h1>Gerenciador de janelas</h1>
+        <h1>{t("Window manager")}</h1>
         <button className="secondary" onClick={onBack}>
-          Voltar
+          {t("Back")}
         </button>
       </div>
 
       <div className="ext-card">
         <div className="ext-card-row">
-          <strong>Monitores</strong>
-          <span className="field-hint">{windows.length} janelas abertas</span>
+          <strong>{t("Monitors")}</strong>
+          <span className="field-hint">
+            {t("{count} open windows", { count: windows.length })}
+          </span>
         </div>
         {monitors.map((monitor) => (
           <div className="monitor-row" key={monitor.index}>
             <span className="monitor-index">{monitor.index + 1}</span>
-            <span>{monitor.name || `Monitor ${monitor.index + 1}`}</span>
+            <span>{monitor.name || t("Monitor {number}", { number: monitor.index + 1 })}</span>
             <span className="field-hint">
               {monitor.width}×{monitor.height}
-              {monitor.primary ? " · principal" : ""}
+              {monitor.primary ? ` · ${t("primary")}` : ""}
             </span>
           </div>
         ))}
       </div>
 
-      <h2>Layouts</h2>
+      <h2>{t("Layouts")}</h2>
       <div className="inline">
         <input
           className="text-input"
-          placeholder="Nome do layout"
+          placeholder={t("Layout name")}
           value={layoutName}
           onChange={(event) => setLayoutName(event.target.value)}
         />
         <HotkeyInput
           value={layoutHotkey}
           onChange={(combo) => setLayoutHotkey(combo)}
-          placeholder="Atalho (ex.: Win+Shift+F7)"
+          placeholder={t("Shortcut (e.g. Win+Shift+F7)")}
         />
         <button className="primary" disabled={busy} onClick={() => void saveLayout()}>
-          Salvar atual
+          {t("Save current")}
         </button>
       </div>
       <span className="field-hint">
-        Organize as janelas manualmente (ex.: navegador 25% à direita, Discord 75%
-        à esquerda) e salve. O atalho reaplica depois.
+        {t("Arrange the windows manually (e.g. browser 25% on the right, Discord 75% on the left) and save. The shortcut reapplies it later.")}
       </span>
 
       {layouts.map((layout) => (
@@ -197,7 +203,7 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             <div>
               <strong>{layout.name}</strong>{" "}
               <span className="ext-id">
-                {layout.slots.length} janela(s)
+                {t("{count} window(s)", { count: layout.slots.length })}
                 {layout.hotkey ? ` · ${layout.hotkey}` : ""}
               </span>
             </div>
@@ -207,7 +213,7 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
                 disabled={busy}
                 onClick={() => void applyLayout(layout)}
               >
-                Aplicar
+                {t("Apply")}
               </button>
               <button
                 className="secondary"
@@ -216,14 +222,14 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
                   void run(() => api.deleteWindowLayout(layout.id))
                 }
               >
-                Excluir
+                {t("Delete")}
               </button>
             </div>
           </div>
           <HotkeyInput
             value={layout.hotkey ?? ""}
             excludeLayoutId={layout.id}
-            placeholder="Sem atalho — clique para gravar"
+            placeholder={t("No shortcut — click to record")}
             onChange={async (combo) => {
               await api.setWindowLayoutHotkey(layout.id, combo || null);
               await refresh();
@@ -232,7 +238,7 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
         </div>
       ))}
 
-      <h2>Regras por app</h2>
+      <h2>{t("Per-app rules")}</h2>
       <div className="rule-form">
         <div className="inline">
           <select
@@ -240,7 +246,7 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             defaultValue=""
             onChange={(event) => pickWindow(event.target.value)}
           >
-            <option value="">Capturar janela aberta…</option>
+            <option value="">{t("Capture open window…")}</option>
             {pickableWindows.map(({ win, index }) => (
               <option key={`${win.handle}-${index}`} value={index}>
                 {win.process} — {win.title.slice(0, 60)}
@@ -248,19 +254,19 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             ))}
           </select>
           <button className="secondary" onClick={() => void refresh()}>
-            Atualizar janelas
+            {t("Refresh windows")}
           </button>
         </div>
         <div className="inline">
           <input
             className="text-input"
-            placeholder="Nome da regra"
+            placeholder={t("Rule name")}
             value={ruleName}
             onChange={(event) => setRuleName(event.target.value)}
           />
           <input
             className="text-input"
-            placeholder="Processo/título/classe (ex.: chrome)"
+            placeholder={t("Process/title/class (e.g. chrome)")}
             value={ruleApp}
             onChange={(event) => setRuleApp(event.target.value)}
           />
@@ -271,9 +277,9 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             value={ruleField}
             onChange={(event) => setRuleField(event.target.value)}
           >
-            <option value="process">processo</option>
-            <option value="title">título</option>
-            <option value="class">classe</option>
+            <option value="process">{t("process")}</option>
+            <option value="title">{t("title")}</option>
+            <option value="class">{t("class")}</option>
           </select>
           <select
             className="text-input"
@@ -282,7 +288,7 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
           >
             {monitors.map((monitor) => (
               <option key={monitor.index} value={monitor.index}>
-                Monitor {monitor.index + 1}
+                {t("Monitor {number}", { number: monitor.index + 1 })}
               </option>
             ))}
           </select>
@@ -319,20 +325,19 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             disabled={busy || !ruleApp.trim()}
             onClick={() => void createRule()}
           >
-            Adicionar regra
+            {t("Add rule")}
           </button>
           <button
             className="secondary"
             disabled={busy}
             onClick={() => void applyRules()}
           >
-            Aplicar regras agora
+            {t("Apply rules now")}
           </button>
         </div>
       </div>
       <span className="field-hint">
-        Regras são aplicadas automaticamente quando uma janela nova do app
-        aparece (polling ~1,2s). x/y/w/h são frações da área útil do monitor.
+        {t("Rules are applied automatically when a new window for the app appears (polling ~1.2s). x/y/w/h are fractions of the monitor work area.")}
       </span>
 
       {rules.map((rule) => (
@@ -341,9 +346,9 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
             <div>
               <strong>{rule.name}</strong>{" "}
               <span className="ext-id">
-                {rule.appMatch} · {rule.matchField} · monitor{" "}
-                {rule.monitor + 1} · {Math.round(rule.w * 100)}%×
-                {Math.round(rule.h * 100)}%
+                {rule.appMatch} · {t(rule.matchField)} ·{" "}
+                {t("monitor {number}", { number: rule.monitor + 1 })} ·{" "}
+                {Math.round(rule.w * 100)}%×{Math.round(rule.h * 100)}%
               </span>
             </div>
             <button
@@ -351,7 +356,7 @@ export function WindowManager({ onBack }: { onBack: () => void }) {
               disabled={busy}
               onClick={() => void run(() => api.deleteWindowRule(rule.id))}
             >
-              Excluir
+              {t("Delete")}
             </button>
           </div>
         </div>

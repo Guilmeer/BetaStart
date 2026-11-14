@@ -16,6 +16,7 @@ import {
   type SimulationNodeDatum,
 } from "d3-force";
 import { api } from "./api";
+import { useI18n } from "./i18n";
 import type { Graph as GraphData } from "./types";
 
 interface SimNode extends SimulationNodeDatum {
@@ -67,6 +68,7 @@ export function Graph({
   version: number;
   onOpen: (path: string) => void;
 }) {
+  const { t } = useI18n();
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState({ width: 640, height: 520 });
@@ -431,14 +433,14 @@ export function Graph({
     return <div className="graph-empty">{error}</div>;
   }
   if (!data) {
-    return <div className="graph-empty">Carregando grafo…</div>;
+    return <div className="graph-empty">{t("Loading graph…")}</div>;
   }
   if (data.nodes.length === 0) {
     return (
       <div className="graph-empty">
-        Sem dados para exibir.
+        {t("No data to display.")}
         <br />
-        Crie notas, tasks ou tags.
+        {t("Create notes, tasks, or tags.")}
       </div>
     );
   }
@@ -462,9 +464,9 @@ export function Graph({
             interactedRef.current = false;
             fitView();
           }}
-          title="Mostrar o grafo inteiro"
+          title={t("Show the whole graph")}
         >
-          enquadrar
+          {t("fit")}
         </button>
         <span className="graph-zoom">{Math.round(view.k * 100)}%</span>
       </div>
@@ -567,27 +569,29 @@ export function Graph({
 
       <div className="graph-legend">
         <span>
-          <i style={{ background: COLORS.project }} /> projeto
+          <i style={{ background: COLORS.project }} /> {t("project")}
         </span>
         <span>
-          <i style={{ background: COLORS.note }} /> nota
+          <i style={{ background: COLORS.note }} /> {t("note")}
         </span>
         <span>
-          <i style={{ background: COLORS.task }} /> task
+          <i style={{ background: COLORS.task }} /> {t("task")}
         </span>
         <span>
-          <i style={{ background: COLORS.tag }} /> tag
+          <i style={{ background: COLORS.tag }} /> {t("tag")}
         </span>
         <span>
-          <i style={{ background: COLORS.missing }} /> não resolvido
+          <i style={{ background: COLORS.missing }} /> {t("unresolved")}
         </span>
         <span className="field-hint">
-          {data.nodes.length} nós · {data.edges.length} arestas
+          {t("{nodes} nodes · {edges} edges", {
+            nodes: data.nodes.length,
+            edges: data.edges.length,
+          })}
         </span>
       </div>
       <div className="graph-hint">
-        arraste o fundo para mover · roda para zoom · arraste uma bolinha para
-        reorganizar · clique para abrir
+        {t("drag the background to move · scroll to zoom · drag a node to rearrange · click to open")}
       </div>
     </div>
   );

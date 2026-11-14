@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { useI18n } from "./i18n";
 
 interface HotkeyInputProps {
   value: string;
@@ -82,6 +83,7 @@ export function HotkeyInput({
   placeholder,
   disabled,
 }: HotkeyInputProps) {
+  const { t } = useI18n();
   const [listening, setListening] = useState(false);
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +124,7 @@ export function HotkeyInput({
           Boolean(excludeLauncher),
         );
         if (!check.valid) {
-          setError(check.conflict ?? "atalho inválido");
+          setError(check.conflict ?? t("invalid shortcut"));
           return;
         }
         setError(null);
@@ -133,7 +135,7 @@ export function HotkeyInput({
         void api.resumeHotkeys().catch(() => {});
       }
     },
-    [excludeLayoutId, excludeLauncher, onChange],
+    [excludeLayoutId, excludeLauncher, onChange, t],
   );
 
   useEffect(() => {
@@ -160,7 +162,7 @@ export function HotkeyInput({
       if (!key) return; // só modificador; continua ouvindo
 
       if (mods.length === 0 && !key.startsWith("F")) {
-        setError("Use ao menos um modificador (Ctrl, Alt, Shift ou Win).");
+        setError(t("Use at least one modifier (Ctrl, Alt, Shift, or Win)."));
         return;
       }
 
@@ -178,7 +180,7 @@ export function HotkeyInput({
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [listening, value, finalize, stop]);
+  }, [listening, value, finalize, stop, t]);
 
   useEffect(
     () => () => {
@@ -199,11 +201,11 @@ export function HotkeyInput({
         }`}
         onClick={() => void (listening ? stop(true) : start())}
         disabled={disabled}
-        title={error ?? "Clique e pressione o atalho"}
+        title={error ?? t("Click and press the shortcut")}
       >
         {listening
-          ? "Pressione o atalho… (Esc cancela)"
-          : draft || placeholder || "Clique para gravar"}
+          ? t("Press the shortcut… (Esc cancels)")
+          : draft || placeholder || t("Click to record")}
       </button>
       {error && <span className="hotkey-error">{error}</span>}
     </div>

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { Graph } from "./Graph";
+import { useI18n } from "./i18n";
 import { MarkdownInline, MarkdownView } from "./Markdown";
 import type {
   MemoryFile,
@@ -15,16 +16,16 @@ import type {
 
 const STATUSES = ["todo", "in_progress", "done"] as const;
 const STATUS_LABEL: Record<string, string> = {
-  todo: "A fazer",
-  in_progress: "Fazendo",
-  done: "Feito",
-  blocked: "Bloqueado",
-  cancelled: "Cancelado",
+  todo: "To do",
+  in_progress: "In progress",
+  done: "Done",
+  blocked: "Blocked",
+  cancelled: "Cancelled",
 };
 const PRIORITY_LABEL: Record<string, string> = {
-  high: "Alta",
-  medium: "Média",
-  low: "Baixa",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
 };
 
 function toLocalInput(iso: string | null): string {
@@ -35,15 +36,15 @@ function toLocalInput(iso: string | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function formatEpoch(timestamp: number | null): string {
+function formatEpoch(timestamp: number | null, locale: string): string {
   if (!timestamp) return "";
-  return new Date(timestamp * 1000).toLocaleString();
+  return new Date(timestamp * 1000).toLocaleString(locale);
 }
 
-function formatIsoDisplay(iso: string | null): string {
+function formatIsoDisplay(iso: string | null, locale: string): string {
   if (!iso) return "";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(locale);
 }
 
 function kindIcon(kind: string): string {
@@ -128,6 +129,7 @@ function resolveRelativePath(filePath: string, href: string): string {
 }
 
 export function Memory({ onBack }: { onBack: () => void }) {
+  const { t, locale } = useI18n();
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -266,9 +268,11 @@ export function Memory({ onBack }: { onBack: () => void }) {
         void openFile(path);
         return;
       }
-      setMessage(`O link "${label}" ainda não aponta para um arquivo.`);
+      setMessage(
+        t('The link "{label}" does not point to a file yet.', { label }),
+      );
     },
-    [openFile],
+    [openFile, t],
   );
 
   const openLink = useCallback(
@@ -305,7 +309,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
           if (!active || !selectedPath) return;
           if (noteDirty) {
             setMessage(
-              "O arquivo mudou fora do Beta Start. Salve suas alterações ou reabra a nota.",
+              t("The file changed outside Beta Start. Save your changes or reopen the note."),
             );
             return;
           }
@@ -316,7 +320,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
             if (active) {
               setNote(null);
               setSelectedPath(null);
-              setMessage("A nota aberta não está mais disponível.");
+              setMessage(t("The open note is no longer available."));
             }
           }
         });
@@ -328,7 +332,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
       if (timer) window.clearTimeout(timer);
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
-  }, [refresh, selectedPath, noteDirty]);
+  }, [refresh, selectedPath, noteDirty, t]);
 
   const noteVersion = useRef(0);
   const autosaveBusy = useRef(false);
@@ -369,7 +373,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
           await persistNote(snapshot);
           if (noteVersion.current === version) {
             setNoteDirty(false);
-            setMessage("Salvo automaticamente.");
+            setMessage(t("Saved automatically."));
           }
         } catch (error) {
           setMessage(String(error));
@@ -379,7 +383,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
       })();
     }, 1500);
     return () => window.clearTimeout(timer);
-  }, [note, noteDirty, editorMode, persistNote]);
+  }, [note, noteDirty, editorMode, persistNote, t]);
 
   const saveNote = useCallback(async () => {
     if (!note) return;
@@ -391,18 +395,18 @@ export function Memory({ onBack }: { onBack: () => void }) {
       setNote(await api.readNote(note.path));
       noteVersion.current += 1;
       setNoteDirty(false);
-      setMessage("Salvo.");
+      setMessage(t("Saved."));
     } catch (error) {
       setMessage(String(error));
     } finally {
       setBusy(false);
     }
-  }, [note, refresh, persistNote]);
+  }, [note, refresh, persistNote, t]);
 
   const createNote = useCallback(async () => {
     setBusy(true);
     try {
-      const created = await api.createNote(projectFilter, "Nova nota");
+      const created = await api.createNote(projectFilter, t("New note"));
       setSelectedPath(created.path);
       setNote(created);
       setNoteDirty(false);
@@ -413,12 +417,12 @@ export function Memory({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [projectFilter, refresh]);
+  }, [projectFilter, refresh, t]);
 
   const createDailyNote = useCallback(async () => {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const title = `Diário ${today}`;
+    const title = t("Journal {date}", { date: today });
     const existing = files.find((file) => file.title === title);
     if (existing) {
       await openFile(existing.path);
@@ -430,7 +434,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
       const withBody = await api.saveNote(
         created.path,
         title,
-        ["diario"],
+        ["journal"],
         `# ${title}\n\n`,
       );
       setSelectedPath(created.path);
@@ -443,13 +447,15 @@ export function Memory({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [files, openFile, projectFilter, refresh]);
+  }, [files, openFile, projectFilter, refresh, t]);
 
   const deleteNote = useCallback(async () => {
     if (!note) return;
     if (
       !window.confirm(
-        `Excluir "${note.title}"?\n\nO arquivo será removido do disco.`,
+        t('Delete "{title}"?\n\nThe file will be removed from disk.', {
+          title: note.title,
+        }),
       )
     ) {
       return;
@@ -466,7 +472,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [note, refresh]);
+  }, [note, refresh, t]);
 
   const createProject = useCallback(async () => {
     const name = newProject.trim();
@@ -491,10 +497,10 @@ export function Memory({ onBack }: { onBack: () => void }) {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "Selecionar pasta do projeto",
+        title: t("Select the project folder"),
       });
       if (!selected || Array.isArray(selected)) return;
-      setMessage("Indexando pasta…");
+      setMessage(t("Indexing folder…"));
       const project = await api.linkProject(selected);
       await refresh();
       setSelectedProject(project.slug);
@@ -502,7 +508,10 @@ export function Memory({ onBack }: { onBack: () => void }) {
         (file) => file.kind !== "project",
       );
       setMessage(
-        `Pasta vinculada como projeto "${project.title}" — ${indexed.length} arquivo(s) .md indexado(s).`,
+        t('Folder linked as project "{name}" — {count} .md file(s) indexed.', {
+          name: project.title,
+          count: indexed.length,
+        }),
       );
     } catch (error) {
       setMessage(String(error));
@@ -510,13 +519,15 @@ export function Memory({ onBack }: { onBack: () => void }) {
       await api.setNativeDialogOpen(false).catch(() => {});
       setBusy(false);
     }
-  }, [refresh]);
+  }, [refresh, t]);
 
   const unlinkSelectedProject = useCallback(async () => {
     const project = projects.find((item) => item.slug === selectedProject);
     if (!project || project.mode !== "linked") return;
     const confirmed = window.confirm(
-      `Desvincular "${project.title}"?\n\nOs arquivos da pasta não serão apagados.`,
+      t('Unlink "{title}"?\n\nFiles in the folder will not be deleted.', {
+        title: project.title,
+      }),
     );
     if (!confirmed) return;
     setBusy(true);
@@ -532,7 +543,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [projects, selectedProject, refresh]);
+  }, [projects, selectedProject, refresh, t]);
 
   const createTask = useCallback(async () => {
     const title = taskTitle.trim();
@@ -588,7 +599,13 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
   const removeTask = useCallback(
     async (task: Task) => {
-      if (!window.confirm(`Excluir a task "${task.title}"?\n\nO arquivo será removido do disco.`)) {
+      if (
+        !window.confirm(
+          t('Delete the task "{title}"?\n\nThe file will be removed from disk.', {
+            title: task.title,
+          }),
+        )
+      ) {
         return;
       }
       setBusy(true);
@@ -606,7 +623,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
         setBusy(false);
       }
     },
-    [refresh, selectedPath],
+    [refresh, selectedPath, t],
   );
 
   const grouped = useMemo(() => {
@@ -709,12 +726,16 @@ export function Memory({ onBack }: { onBack: () => void }) {
           <div className="task-card-head">
             <strong onClick={() => void openFile(task.filePath)}>{task.title}</strong>
             <span className={`prio prio-${task.priority}`}>
-              {PRIORITY_LABEL[task.priority] ?? task.priority}
+              {PRIORITY_LABEL[task.priority]
+                ? t(PRIORITY_LABEL[task.priority])
+                : task.priority}
             </span>
           </div>
           {(task.due || task.tags.length > 0) && (
             <div className="task-meta">
-              {task.due && <span>⏰ {formatEpoch(task.due)}</span>}
+              {task.due && (
+                <span>⏰ {formatEpoch(task.due, locale)}</span>
+              )}
               {task.tags.map((tag) => (
                 <span className="tag" key={tag}>
                   {tag}
@@ -731,7 +752,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                   disabled={busy}
                   onClick={() => void setStatus(task, status)}
                 >
-                  {STATUS_LABEL[status]}
+                  {t(STATUS_LABEL[status])}
                 </button>
               ))}
               <button disabled={busy} onClick={() => void removeTask(task)}>
@@ -742,7 +763,11 @@ export function Memory({ onBack }: { onBack: () => void }) {
               <button
                 type="button"
                 className={`task-expand ${isOpen ? "open" : ""}`}
-                title={isOpen ? "Retrair subtasks" : `Mostrar ${children.length} subtask(s)`}
+                title={
+                  isOpen
+                    ? t("Collapse subtasks")
+                    : t("Show {count} subtask(s)", { count: children.length })
+                }
                 aria-expanded={isOpen}
                 onClick={() => toggleTask(task.id)}
               >
@@ -764,13 +789,13 @@ export function Memory({ onBack }: { onBack: () => void }) {
   return (
     <section className="memory">
       <div className="mem-header">
-        <h1>Memória & Tasks</h1>
+        <h1>{t("Memory & Tasks")}</h1>
         <div className="inline">
           <button className="secondary" onClick={onBack}>
-            Voltar
+            {t("Back")}
           </button>
           <button className="secondary" disabled={busy} onClick={() => void refresh()}>
-            Atualizar
+            {t("Refresh")}
           </button>
         </div>
       </div>
@@ -778,38 +803,38 @@ export function Memory({ onBack }: { onBack: () => void }) {
       <div className="mem-toolbar">
         <input
           className="text-input"
-          placeholder="Buscar na memória…"
+          placeholder={t("Search memory…")}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
         <button className="primary" disabled={busy} onClick={() => void createNote()}>
-          Nova nota
+          {t("New note")}
         </button>
         <button
           className="secondary"
           disabled={busy}
           onClick={() => void createDailyNote()}
-          title="Abre ou cria a nota de hoje"
+          title={t("Open or create today's note")}
         >
-          Hoje
+          {t("Today")}
         </button>
       </div>
 
       <div className="mem-body">
         <aside className="mem-sidebar">
           <div className="mem-projects">
-            <h2>Projetos</h2>
+            <h2>{t("Projects")}</h2>
             <button
               className={selectedProject === "all" ? "active" : ""}
               onClick={() => setSelectedProject("all")}
             >
-              Todos
+              {t("All")}
             </button>
             <button
               className={selectedProject === "global" ? "active" : ""}
               onClick={() => setSelectedProject("global")}
             >
-              Global
+              {t("Global")}
             </button>
             {projects.map((project) => (
               <button
@@ -820,14 +845,14 @@ export function Memory({ onBack }: { onBack: () => void }) {
               >
                 <span className="mem-project-name">{project.title}</span>
                 {project.mode === "linked" && (
-                  <span className="mem-project-badge">pasta</span>
+                  <span className="mem-project-badge">{t("folder")}</span>
                 )}
               </button>
             ))}
             <div className="inline">
               <input
                 className="text-input"
-                placeholder="Novo projeto"
+                placeholder={t("New project")}
                 value={newProject}
                 onChange={(event) => setNewProject(event.target.value)}
                 onKeyDown={(event) => {
@@ -840,19 +865,19 @@ export function Memory({ onBack }: { onBack: () => void }) {
               <button
                 className="secondary"
                 disabled={busy || !newProject.trim()}
-                title="Criar projeto (Enter)"
+                title={t("Create project (Enter)")}
                 onClick={() => void createProject()}
               >
-                Criar
+                {t("Create")}
               </button>
             </div>
             <button
               className="secondary mem-link-btn"
               disabled={busy}
-              title="Indexar uma pasta existente sem mover os arquivos"
+              title={t("Index an existing folder without moving the files")}
               onClick={() => void linkFolder()}
             >
-              Vincular pasta…
+              {t("Link folder…")}
             </button>
             {selectedLinkedProject && (
               <div className="mem-project-actions">
@@ -867,21 +892,21 @@ export function Memory({ onBack }: { onBack: () => void }) {
                     }
                   }}
                 >
-                  Abrir pasta
+                  {t("Open folder")}
                 </button>
                 <button
                   className="secondary"
                   disabled={busy}
                   onClick={() => void unlinkSelectedProject()}
                 >
-                  Desvincular
+                  {t("Unlink")}
                 </button>
               </div>
             )}
           </div>
 
           <div className="mem-files">
-            <h2>{searchHits ? "Busca" : "Arquivos"}</h2>
+            <h2>{searchHits ? t("Search") : t("Files")}</h2>
             {searchHits ? (
               searchHits.map((hit) => {
                 const rel = relativeToRoot(
@@ -906,7 +931,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 );
               })
             ) : Object.keys(fileTree).length === 0 ? (
-              <div className="mem-empty-small">Nenhum arquivo .md encontrado.</div>
+              <div className="mem-empty-small">{t("No .md files found.")}</div>
             ) : (
               Object.entries(fileTree).map(([project, folders]) => (
                 <div key={project}>
@@ -928,7 +953,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                           <span className={`kind kind-${file.kind}`}>{kindIcon(file.kind)}</span>
                           <span className="mem-file-text">
                             <strong>{file.title}</strong>
-                            <small>{file.kind}</small>
+                            <small>{t(file.kind)}</small>
                           </span>
                         </button>
                       ))}
@@ -953,7 +978,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 ) : (
                   <h1 className="note-title-read">
                     <MarkdownInline
-                      text={note.title || "Sem título"}
+                      text={note.title || t("Untitled")}
                       resolveWikiLink={resolveWikiLink}
                       onOpenWikiLink={openWikiLink}
                       onOpenUrl={openLink}
@@ -966,28 +991,28 @@ export function Memory({ onBack }: { onBack: () => void }) {
                       className={editorMode === "read" ? "active" : ""}
                       onClick={() => setEditorMode("read")}
                     >
-                      Ler
+                      {t("Read")}
                     </button>
                     <button
                       className={editorMode === "edit" ? "active" : ""}
                       onClick={() => setEditorMode("edit")}
                     >
-                      Editar
+                      {t("Edit")}
                     </button>
                   </div>
                   {editorMode === "edit" && (
                     <button className="primary" disabled={busy} onClick={() => void saveNote()}>
-                      Salvar
+                      {t("Save")}
                     </button>
                   )}
                   <button className="secondary" disabled={busy} onClick={() => void deleteNote()}>
-                    Excluir
+                    {t("Delete")}
                   </button>
                 </div>
               </div>
 
               <div className="note-meta">
-                <span className="kind-badge">{note.kind}</span>
+                <span className="kind-badge">{t(note.kind)}</span>
                 {note.project && <span className="kind-badge">{note.project}</span>}
                 {note.id && <span className="kind-badge">#{note.id.slice(0, 8)}</span>}
               </div>
@@ -1000,8 +1025,8 @@ export function Memory({ onBack }: { onBack: () => void }) {
                       className={`link-chip ${link.path ? "" : "unresolved"}`}
                       title={
                         link.path
-                          ? `Abrir ${link.label}`
-                          : `Destino "${link.label}" não encontrado`
+                          ? t("Open {label}", { label: link.label })
+                          : t('Target "{label}" not found', { label: link.label })
                       }
                       onClick={() => openWikiLink(link.label, link.path)}
                     >
@@ -1013,7 +1038,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
               {backlinks.length > 0 && (
                 <div className="backlinks">
-                  <span className="field-label">Citado em</span>
+                  <span className="field-label">{t("Linked from")}</span>
                   <div className="note-links">
                     {backlinks.map((item) => (
                       <button
@@ -1040,7 +1065,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                       >
                         {STATUSES.map((status) => (
                           <option key={status} value={status}>
-                            {STATUS_LABEL[status]}
+                            {t(STATUS_LABEL[status])}
                           </option>
                         ))}
                       </select>
@@ -1051,21 +1076,21 @@ export function Memory({ onBack }: { onBack: () => void }) {
                       >
                         {Object.entries(PRIORITY_LABEL).map(([value, label]) => (
                           <option key={value} value={value}>
-                            {label}
+                            {t(label)}
                           </option>
                         ))}
                       </select>
                       <input
                         className="text-input"
                         type="datetime-local"
-                        title="Data de vencimento"
+                        title={t("Due date")}
                         value={toLocalInput(note.due)}
                         onChange={(event) => updateNote({ due: event.target.value })}
                       />
                       <input
                         className="text-input"
                         type="datetime-local"
-                        title="Lembrete"
+                        title={t("Reminder")}
                         value={toLocalInput(note.remind)}
                         onChange={(event) => updateNote({ remind: event.target.value })}
                       />
@@ -1074,7 +1099,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
                   <input
                     className="text-input"
-                    placeholder="tags, separadas por vírgula"
+                    placeholder={t("tags, comma separated")}
                     value={note.tags.join(", ")}
                     onChange={(event) =>
                       updateNote({
@@ -1090,7 +1115,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                     className="note-body"
                     value={note.body}
                     onChange={(event) => updateNote({ body: event.target.value })}
-                    placeholder="Escreva aqui… use # títulos, **negrito**, listas, [[Nome da nota]] e links"
+                    placeholder={t("Write here… use # headings, **bold**, lists, [[Note name]], and links")}
                   />
                 </>
               ) : (
@@ -1098,16 +1123,28 @@ export function Memory({ onBack }: { onBack: () => void }) {
                   {note.kind === "task" && (
                     <div className="task-facts">
                       <span className={`kind-badge status-${note.status ?? "todo"}`}>
-                        {STATUS_LABEL[note.status ?? "todo"] ?? note.status}
+                        {STATUS_LABEL[note.status ?? "todo"]
+                          ? t(STATUS_LABEL[note.status ?? "todo"])
+                          : note.status}
                       </span>
                       <span className={`kind-badge prio-${note.priority ?? "medium"}`}>
-                        {PRIORITY_LABEL[note.priority ?? "medium"] ?? note.priority}
+                        {PRIORITY_LABEL[note.priority ?? "medium"]
+                          ? t(PRIORITY_LABEL[note.priority ?? "medium"])
+                          : note.priority}
                       </span>
                       {note.due && (
-                        <span className="kind-badge">Vence {formatIsoDisplay(note.due)}</span>
+                        <span className="kind-badge">
+                          {t("Due {date}", {
+                            date: formatIsoDisplay(note.due, locale),
+                          })}
+                        </span>
                       )}
                       {note.remind && (
-                        <span className="kind-badge">Lembrete {formatIsoDisplay(note.remind)}</span>
+                        <span className="kind-badge">
+                          {t("Reminder {date}", {
+                            date: formatIsoDisplay(note.remind, locale),
+                          })}
+                        </span>
                       )}
                     </div>
                   )}
@@ -1132,7 +1169,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
               )}
             </>
           ) : (
-            <div className="mem-empty">Selecione um arquivo ou crie uma nota.</div>
+            <div className="mem-empty">{t("Select a file or create a note.")}</div>
           )}
           {message && <p className="settings-msg">{message}</p>}
         </main>
@@ -1150,7 +1187,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 className={rightPanel === "graph" ? "active" : ""}
                 onClick={() => setRightPanel("graph")}
               >
-                Grafo
+                {t("Graph")}
               </button>
             </div>
             {rightPanel === "tasks" && (
@@ -1159,7 +1196,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                   className={view === "list" ? "active" : ""}
                   onClick={() => setView("list")}
                 >
-                  Lista
+                  {t("List")}
                 </button>
                 <button
                   className={view === "kanban" ? "active" : ""}
@@ -1182,7 +1219,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
           <div className="task-form">
             <input
               className="text-input"
-              placeholder="Nova task… (Enter para criar)"
+              placeholder={t("New task… (Enter to create)")}
               value={taskTitle}
               onChange={(event) => setTaskTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -1198,9 +1235,9 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 value={taskPriority}
                 onChange={(event) => setTaskPriority(event.target.value)}
               >
-                <option value="high">Alta</option>
-                <option value="medium">Média</option>
-                <option value="low">Baixa</option>
+                <option value="high">{t("High")}</option>
+                <option value="medium">{t("Medium")}</option>
+                <option value="low">{t("Low")}</option>
               </select>
               <input
                 className="text-input"
@@ -1212,7 +1249,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
             <div className="inline">
               <input
                 className="text-input"
-                placeholder="tags, vírgula"
+                placeholder={t("tags, comma separated")}
                 value={taskTags}
                 onChange={(event) => setTaskTags(event.target.value)}
               />
@@ -1221,7 +1258,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 value={taskParent}
                 onChange={(event) => setTaskParent(event.target.value)}
               >
-                <option value="">Sem pai</option>
+                <option value="">{t("No parent")}</option>
                 {roots.map((task) => (
                   <option key={task.id} value={task.id}>
                     {task.title}
@@ -1234,7 +1271,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
               disabled={busy || !taskTitle.trim()}
               onClick={() => void createTask()}
             >
-              Adicionar task
+              {t("Add task")}
             </button>
           </div>
 
@@ -1247,7 +1284,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 if (list.length === 0) return null;
                 return (
                   <div className="task-group" key={status}>
-                    <div className="task-group-title">{STATUS_LABEL[status]}</div>
+                    <div className="task-group-title">{t(STATUS_LABEL[status])}</div>
                     {list.map((task) => renderTask(task))}
                   </div>
                 );
@@ -1257,7 +1294,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
             <div className="kanban">
               {STATUSES.map((status) => (
                 <div className="kanban-col" key={status}>
-                  <div className="kanban-title">{STATUS_LABEL[status]}</div>
+                  <div className="kanban-title">{t(STATUS_LABEL[status])}</div>
                   {tasks
                     .filter((task) => task.status === status)
                     .map((task) => (
@@ -1273,7 +1310,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                               disabled={busy}
                               onClick={() => void setStatus(task, item)}
                             >
-                              → {STATUS_LABEL[item]}
+                              → {t(STATUS_LABEL[item])}
                             </button>
                           ))}
                         </div>

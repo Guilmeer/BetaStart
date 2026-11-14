@@ -57,6 +57,11 @@ downloads, and installs new versions.
 The complete guide (keys, GitHub Secrets, version/tag, local signed builds, and
 testing with a local server) is in [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md).
 
+Windows SmartScreen may still show **"Unknown publisher"** because Authenticode
+code signing is separate from the updater signature. See
+[`docs/CODE_SIGNING.md`](./docs/CODE_SIGNING.md) for the options (OV/EV
+certificate or Azure Trusted Signing).
+
 ## Usage
 
 - **Alt + Space** opens/closes the launcher.
@@ -68,8 +73,8 @@ testing with a local server) is in [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md
   and reminders.
 - **🪟 Window manager**: save/apply layouts, per-app rules, and multi-monitor support.
 - **📋 Clipboard**: filterable history, pin/unpin, delete, and clear unpinned items.
-- **⚙ Settings**: shortcut, Windows key, theme, start with Windows, search, clipboard,
-  MCP, and extensions.
+- **⚙ Settings**: shortcut, Windows key, theme, language (English/Português), start
+  with Windows, search, clipboard, MCP, and extensions.
 - **🧩 Extensions**: install/manage extensions and the Deno runtime.
 - **Quick web search**: `g`, `yt`, `gh`, `w`, `ddg`, or `maps` + term.
 - **Esc** closes; closing the window sends it to the tray.
@@ -460,8 +465,8 @@ scripts/               # signed build helper
 - **Memory**: autosave, backlinks panel (`[[...]]`), and daily note.
 - **Windows**: open-window picker for rules and optional restore of the last layout
   at startup.
-- **Settings**: light/dark/automatic theme, start with Windows, index folders,
-  clipboard, MCP, and extensions.
+- **Settings**: light/dark/automatic theme, English/Portuguese (Brazil) language,
+  start with Windows, index folders, clipboard, MCP, and extensions.
 - **MCP**: resources, prompts, and audit of the latest calls.
 - **Quality**: GitHub Actions CI and a release workflow with a signed NSIS installer
   and updater artifacts.

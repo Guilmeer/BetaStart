@@ -3,10 +3,22 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
 
 pub fn start(app: tauri::AppHandle, db_path: PathBuf) {
     std::thread::spawn(move || {
+        let language = app
+            .state::<crate::state::AppState>()
+            .config
+            .lock()
+            .map(|config| config.appearance.language.clone())
+            .unwrap_or_else(|_| "en".into());
+        let notification_title = if language == "pt-BR" {
+            "Beta Start — lembrete"
+        } else {
+            "Beta Start — reminder"
+        };
         let conn = match crate::db::open(&db_path) {
             Ok(conn) => conn,
             Err(err) => {
@@ -21,7 +33,7 @@ pub fn start(app: tauri::AppHandle, db_path: PathBuf) {
                     let _ = app
                         .notification()
                         .builder()
-                        .title("Beta Start — lembrete")
+                        .title(notification_title)
                         .body(title.clone())
                         .show();
                     let _ = crate::db::tasks::mark_notified(&conn, reminder_id);

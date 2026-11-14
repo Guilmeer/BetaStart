@@ -1,4 +1,5 @@
 import { Fragment, useMemo, type ReactNode } from "react";
+import { useI18n } from "./i18n";
 
 export interface MarkdownHandlers {
   /** Resolve um link `[[destino]]` para o caminho real do arquivo. */
@@ -119,7 +120,6 @@ function renderToken(
         type="button"
         key={key}
         className={`md-wikilink${path ? "" : " unresolved"}`}
-        title={path ? `Abrir ${label}` : `"${label}" não encontrado`}
         onClick={() => handlers.onOpenWikiLink?.(target, path)}
       >
         {(alias ?? label).trim() || label || target}
@@ -490,6 +490,7 @@ export function MarkdownView({
   source: string;
   className?: string;
 } & MarkdownHandlers) {
+  const { t } = useI18n();
   const blocks = useMemo(
     () => parseBlocks(source.replace(/\r\n?/g, "\n").split("\n"), "md", handlers),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -506,7 +507,9 @@ export function MarkdownView({
       {blocks.length > 0 ? (
         blocks
       ) : (
-        <p className="md-empty">Sem conteúdo. Use “Editar” para escrever.</p>
+        <p className="md-empty">
+          {t('No content. Use "Edit" to start writing.')}
+        </p>
       )}
     </div>
   );

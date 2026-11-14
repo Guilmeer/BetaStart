@@ -346,5 +346,5 @@ export interface Config {
     http: { enabled: boolean; host: string; port: number };
   };
   extensions: { storeUrl: string; denoPath: string | null };
-  appearance: { theme: string };
+  appearance: { theme: string; language: string };
 }

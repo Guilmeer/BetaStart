@@ -12,6 +12,7 @@ import { HotkeyInput } from "./HotkeyInput";
 import { Mcp } from "./Mcp";
 import { Memory } from "./Memory";
 import { WindowManager } from "./WindowManager";
+import { useI18n } from "./i18n";
 import type { Config, SearchResults, StatusInfo } from "./types";
 
 type Screen =
@@ -39,6 +40,7 @@ interface SettingsDraft {
   hideOnBlur: boolean;
   startOnBoot: boolean;
   theme: string;
+  language: string;
   clipboardEnabled: boolean;
   clipboardMax: number;
   includeApps: boolean;
@@ -57,6 +59,7 @@ const DEFAULT_SETTINGS: SettingsDraft = {
   hideOnBlur: true,
   startOnBoot: false,
   theme: "dark",
+  language: "en",
   clipboardEnabled: true,
   clipboardMax: 500,
   includeApps: true,
@@ -108,40 +111,43 @@ const WEB_ACTIONS: Array<{
 }> = [
   {
     prefix: "g",
-    label: "Buscar no Google",
+    label: "Search Google",
     build: (term) => `https://www.google.com/search?q=${encodeURIComponent(term)}`,
   },
   {
     prefix: "yt",
-    label: "Buscar no YouTube",
+    label: "Search YouTube",
     build: (term) =>
       `https://www.youtube.com/results?search_query=${encodeURIComponent(term)}`,
   },
   {
     prefix: "gh",
-    label: "Buscar no GitHub",
+    label: "Search GitHub",
     build: (term) => `https://github.com/search?q=${encodeURIComponent(term)}`,
   },
   {
     prefix: "w",
-    label: "Buscar na Wikipédia",
+    label: "Search Wikipedia",
     build: (term) =>
       `https://pt.wikipedia.org/w/index.php?search=${encodeURIComponent(term)}`,
   },
   {
     prefix: "ddg",
-    label: "Buscar no DuckDuckGo",
+    label: "Search DuckDuckGo",
     build: (term) => `https://duckduckgo.com/?q=${encodeURIComponent(term)}`,
   },
   {
     prefix: "maps",
-    label: "Abrir no Google Maps",
+    label: "Open in Google Maps",
     build: (term) =>
       `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(term)}`,
   },
 ];
 
-function webAction(query: string): Row | null {
+function webAction(
+  query: string,
+  t: (key: string) => string,
+): Row | null {
   const trimmed = query.trim();
   const lower = trimmed.toLowerCase();
   for (const action of WEB_ACTIONS) {
@@ -152,7 +158,7 @@ function webAction(query: string): Row | null {
     return {
       kind: "web",
       key: `web:${action.prefix}:${term}`,
-      title: `${action.label}: ${term}`,
+      title: `${t(action.label)}: ${term}`,
       subtitle: url,
       url,
     };
@@ -184,6 +190,7 @@ function badgeLabel(row: Row): string {
 }
 
 function App() {
+  const { t, language, setLanguage } = useI18n();
   const [screen, setScreen] = useState<Screen>("search");
   const [, setConfig] = useState<Config | null>(null);
   const [status, setStatus] = useState<StatusInfo | null>(null);
@@ -226,10 +233,12 @@ function App() {
     setConfig(cfg);
     setMode(cfg.startMenu.mode === "replace" ? "replace" : "off");
     setHotkey(cfg.hotkeys.launcher);
+    setLanguage(cfg.appearance.language || "en");
     setSettings({
       hideOnBlur: cfg.tray.hideOnBlur,
       startOnBoot: cfg.tray.startOnBoot,
       theme: cfg.appearance.theme || "dark",
+      language: cfg.appearance.language || "en",
       clipboardEnabled: cfg.clipboard.enabled,
       clipboardMax: cfg.clipboard.maxEntries,
       includeApps: cfg.search.includeApps,
@@ -243,7 +252,7 @@ function App() {
       storeUrl: cfg.extensions.storeUrl,
       denoPath: cfg.extensions.denoPath ?? "",
     });
-  }, []);
+  }, [setLanguage]);
 
   const load = useCallback(async () => {
     try {
@@ -350,7 +359,7 @@ function App() {
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
-    const web = webAction(query);
+    const web = webAction(query, t);
     if (web) out.push(web);
     if (!results) return out;
 
@@ -359,7 +368,7 @@ function App() {
         kind: "calculator",
         key: "calc",
         title: results.calculation,
-        subtitle: "Copiar resultado",
+        subtitle: t("Copy result"),
         value: results.calculation,
       });
     }
@@ -389,13 +398,13 @@ function App() {
         kind: "clipboard",
         key: `clip:${clip.id}`,
         title: isImage
-          ? "Imagem copiada"
+          ? t("Copied image")
           : text.length > 90
             ? `${text.slice(0, 90)}…`
-            : text || "(vazio)",
+            : text || t("(empty)"),
         subtitle: isImage
-          ? "Área de transferência · imagem"
-          : "Área de transferência",
+          ? t("Clipboard · image")
+          : t("Clipboard"),
         text: clip.text ?? "",
         id: clip.id,
         isImage,
@@ -413,7 +422,7 @@ function App() {
       });
     }
     return out;
-  }, [results, query]);
+  }, [results, query, t]);
 
   const activate = useCallback(
     async (row: Row) => {
@@ -444,7 +453,7 @@ function App() {
           );
           void api.touchUsage(row.kind, row.key).catch(() => {});
           if (result.kind === "message") {
-            setToast(result.text ?? result.toast ?? "Comando executado.");
+            setToast(result.text ?? result.toast ?? t("Command executed."));
             return;
           }
           await api.hideLauncher();
@@ -457,7 +466,7 @@ function App() {
         setToast(String(error));
       }
     },
-    [refreshStatus],
+    [refreshStatus, t],
   );
 
   // Atalhos de teclado globais.
@@ -518,7 +527,7 @@ function App() {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "Selecionar pasta para indexar",
+        title: t("Select a folder to index"),
       });
       if (selected && !Array.isArray(selected)) addIndexDir(selected);
     } catch (error) {
@@ -526,7 +535,7 @@ function App() {
     } finally {
       await api.setNativeDialogOpen(false).catch(() => {});
     }
-  }, [addIndexDir]);
+  }, [addIndexDir, t]);
 
   const saveSettings = useCallback(async () => {
     setSettingsBusy(true);
@@ -558,7 +567,7 @@ function App() {
           autoApplyRules: settings.autoApplyRules,
           restoreLastLayout: settings.restoreLastLayout,
         },
-        appearance: { theme: settings.theme },
+        appearance: { theme: settings.theme, language: settings.language },
         mcp: {
           enabled: settings.mcpEnabled,
           http: {
@@ -575,14 +584,14 @@ function App() {
         },
       });
       applyConfig(cfg);
-      setToast("Configurações salvas.");
+      setToast(t("Settings saved."));
       setScreen("search");
     } catch (error) {
       setSettingsMsg(String(error));
     } finally {
       setSettingsBusy(false);
     }
-  }, [mode, hotkey, settings, applyConfig]);
+  }, [mode, hotkey, settings, applyConfig, t]);
 
   const checkUpdates = useCallback(async () => {
     setUpdateStatus("checking");
@@ -672,16 +681,16 @@ function App() {
   const reindexFiles = useCallback(async () => {
     try {
       await api.rebuildFilesIndex();
-      setSettingsMsg("Reindexação iniciada em segundo plano.");
+      setSettingsMsg(t("Reindexing started in the background."));
     } catch (error) {
       setSettingsMsg(String(error));
     }
-  }, []);
+  }, [t]);
 
   if (loading) {
     return (
       <div className="launcher">
-        <div className="loading">Carregando Beta Start…</div>
+        <div className="loading">{t("Loading Beta Start…")}</div>
       </div>
     );
   }
@@ -697,12 +706,17 @@ function App() {
         <div className="topbar-right">
           <span className="status">
             {status
-              ? `${status.appsIndexed} apps · ${status.filesIndexed} arq · ${status.clipboardCount} clips · ${status.extensionsCount} ext`
-              : "carregando…"}
+              ? t("{apps} apps · {files} files · {clips} clips · {exts} ext", {
+                  apps: status.appsIndexed,
+                  files: status.filesIndexed,
+                  clips: status.clipboardCount,
+                  exts: status.extensionsCount,
+                })
+              : t("loading…")}
           </span>
           <button
             className="icon-btn"
-            title="Área de transferência"
+            title={t("Clipboard")}
             onClick={() =>
               setScreen(screen === "clipboard" ? "search" : "clipboard")
             }
@@ -718,7 +732,7 @@ function App() {
           </button>
           <button
             className="icon-btn"
-            title="Memória & Tasks"
+            title={t("Memory & Tasks")}
             onClick={() =>
               setScreen(screen === "memory" ? "search" : "memory")
             }
@@ -727,7 +741,7 @@ function App() {
           </button>
           <button
             className="icon-btn"
-            title="Gerenciador de janelas"
+            title={t("Window manager")}
             onClick={() =>
               setScreen(screen === "windows" ? "search" : "windows")
             }
@@ -736,7 +750,7 @@ function App() {
           </button>
           <button
             className="icon-btn"
-            title="Extensões"
+            title={t("Extensions")}
             onClick={() =>
               setScreen(screen === "extensions" ? "search" : "extensions")
             }
@@ -745,7 +759,7 @@ function App() {
           </button>
           <button
             className="icon-btn"
-            title="Configurações"
+            title={t("Settings")}
             onClick={() =>
               setScreen(screen === "settings" ? "search" : "settings")
             }
@@ -757,33 +771,30 @@ function App() {
 
       {screen === "onboarding" && (
         <section className="onboarding">
-          <h1>Como você quer abrir o Beta Start?</h1>
-          <p>Você pode mudar isso depois no ícone ⚙.</p>
+          <h1>{t("How do you want to open Beta Start?")}</h1>
+          <p>{t("You can change this later in the ⚙ menu.")}</p>
           <div className="choices">
             <button
               className="choice"
               onClick={() => void chooseOnboarding("off")}
             >
-              <strong>Usar Alt + Espaço (recomendado)</strong>
+              <strong>{t("Use Alt + Space (recommended)")}</strong>
               <span>
-                Não mexe na tecla Windows. Abre/fecha o Beta Start com
-                Alt+Espaço.
+                {t("Does not touch the Windows key. Opens/closes Beta Start with Alt+Space.")}
               </span>
             </button>
             <button
               className="choice"
               onClick={() => void chooseOnboarding("replace")}
             >
-              <strong>Substituir a tecla Windows</strong>
+              <strong>{t("Replace the Windows key")}</strong>
               <span>
-                A tecla Win sozinha abre o Beta Start. Combos como Win+E
-                continuam funcionando.
+                {t("The Win key alone opens Beta Start. Combos such as Win+E keep working.")}
               </span>
             </button>
           </div>
           <p className="hint">
-            Obs.: Win+X é reservado pelo Windows (menu de energia), por isso não
-            usamos.
+            {t("Note: Win+X is reserved by Windows (power menu), so we don't use it.")}
           </p>
         </section>
       )}
@@ -791,49 +802,50 @@ function App() {
       {screen === "settings" && (
         <section className="settings">
           <div className="ext-header">
-            <h1>Configurações</h1>
+            <h1>{t("Settings")}</h1>
             <button className="secondary" onClick={() => setScreen("search")}>
-              Voltar
+              {t("Back")}
             </button>
           </div>
 
           <div className="settings-section">
-            <h2>Launcher</h2>
+            <h2>{t("Launcher")}</h2>
             <div className="field">
-              <span className="field-label">Atalho do launcher</span>
+              <span className="field-label">{t("Launcher shortcut")}</span>
               <HotkeyInput
                 value={hotkey}
                 onChange={(combo) => setHotkey(combo)}
                 excludeLauncher
-                placeholder="Clique e pressione o atalho (ex.: Alt+Space)"
+                placeholder={t("Click and press the shortcut (e.g. Alt+Space)")}
               />
               <span className="field-hint">
-                Clique no campo e pressione a combinação desejada. Padrão: Alt+Space.
+                {t("Click the field and press the desired combination. Default: Alt+Space.")}
               </span>
             </div>
 
             <div className="field">
-              <span className="field-label">Tecla Windows</span>
+              <span className="field-label">{t("Windows key")}</span>
               <div className="radio-row">
                 <button
                   className={`radio ${mode === "off" ? "active" : ""}`}
                   onClick={() => setMode("off")}
                 >
-                  Não substituir (recomendado)
+                  {t("Do not replace (recommended)")}
                 </button>
                 <button
                   className={`radio ${mode === "replace" ? "active" : ""}`}
                   onClick={() => setMode("replace")}
                 >
-                  Substituir a tecla Win
+                  {t("Replace the Win key")}
                 </button>
               </div>
               <span className="field-hint">
-                Win+X é usado pelo próprio Windows; por isso o padrão é Alt+Space.
+                {t("Win+X is used by Windows itself, so the default is Alt+Space.")}
               </span>
               <span className="field-hint">
-                Hook da tecla Win:{" "}
-                {status?.winHookActive ? "ativo" : "inativo"}
+                {t("Win key hook: {status}", {
+                  status: status?.winHookActive ? t("active") : t("inactive"),
+                })}
               </span>
             </div>
 
@@ -845,7 +857,7 @@ function App() {
                   updateSettings({ hideOnBlur: event.target.checked })
                 }
               />
-              <span>Fechar ao clicar fora do launcher</span>
+              <span>{t("Close when clicking outside the launcher")}</span>
             </label>
             <label className="check-row">
               <input
@@ -855,14 +867,14 @@ function App() {
                   updateSettings({ startOnBoot: event.target.checked })
                 }
               />
-              <span>Iniciar com o Windows</span>
+              <span>{t("Start with Windows")}</span>
             </label>
           </div>
 
           <div className="settings-section">
-            <h2>Aparência</h2>
+            <h2>{t("Appearance")}</h2>
             <label className="field">
-              <span className="field-label">Tema</span>
+              <span className="field-label">{t("Theme")}</span>
               <select
                 className="text-input"
                 value={settings.theme}
@@ -870,20 +882,33 @@ function App() {
                   updateSettings({ theme: event.target.value })
                 }
               >
-                <option value="dark">Escuro</option>
-                <option value="light">Claro</option>
-                <option value="auto">Automático (Windows)</option>
+                <option value="dark">{t("Dark")}</option>
+                <option value="light">{t("Light")}</option>
+                <option value="auto">{t("Automatic (Windows)")}</option>
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">{t("Language")}</span>
+              <select
+                className="text-input"
+                value={settings.language}
+                onChange={(event) =>
+                  updateSettings({ language: event.target.value })
+                }
+              >
+                <option value="en">English</option>
+                <option value="pt-BR">Português (Brasil)</option>
               </select>
             </label>
           </div>
 
           <div className="settings-section">
-            <h2>Atualizações</h2>
+            <h2>{t("Updates")}</h2>
             <div className="settings-grid">
               <div className="field">
-                <span className="field-label">Versão instalada</span>
+                <span className="field-label">{t("Installed version")}</span>
                 <code className="update-version">
-                  {status?.version ?? "carregando…"}
+                  {status?.version ?? t("loading…")}
                 </code>
               </div>
               <button
@@ -895,24 +920,29 @@ function App() {
                 onClick={() => void checkUpdates()}
               >
                 {updateStatus === "checking"
-                  ? "Verificando…"
-                  : "Verificar atualizações"}
+                  ? t("Checking…")
+                  : t("Check for updates")}
               </button>
             </div>
 
             {updateStatus === "latest" && (
               <span className="field-hint">
-                Você já está na versão mais recente.
+                {t("You are already on the latest version.")}
               </span>
             )}
 
             {updateStatus === "available" && updateInfo && (
               <div className="update-card">
-                <strong>Nova versão {updateInfo.version} disponível</strong>
+                <strong>
+                  {t("New version {version} available", {
+                    version: updateInfo.version,
+                  })}
+                </strong>
                 {updateInfo.date && (
                   <span className="field-hint">
-                    Publicada em{" "}
-                    {new Date(updateInfo.date).toLocaleString()}
+                    {t("Published on {date}", {
+                      date: new Date(updateInfo.date).toLocaleString(language),
+                    })}
                   </span>
                 )}
                 {updateInfo.notes && (
@@ -923,13 +953,13 @@ function App() {
                     className="primary"
                     onClick={() => void installUpdate()}
                   >
-                    Baixar e instalar
+                    {t("Download and install")}
                   </button>
                   <button
                     className="secondary"
                     onClick={() => void dismissUpdate()}
                   >
-                    Depois
+                    {t("Later")}
                   </button>
                 </div>
               </div>
@@ -937,7 +967,7 @@ function App() {
 
             {updateStatus === "downloading" && (
               <div className="update-card">
-                <strong>Baixando atualização…</strong>
+                <strong>{t("Downloading update…")}</strong>
                 <div className="update-progress">
                   <div
                     className="update-progress-bar"
@@ -950,7 +980,7 @@ function App() {
 
             {updateStatus === "ready" && (
               <span className="field-hint">
-                Atualização instalada. Reiniciando…
+                {t("Update installed. Restarting…")}
               </span>
             )}
 
@@ -958,21 +988,18 @@ function App() {
               <>
                 <span className="settings-msg">{updateMessage}</span>
                 <span className="field-hint">
-                  Se o endpoint ainda for o placeholder, configure o repositório
-                  de releases em <code>tauri.conf.json</code> (ou use o workflow
-                  de release no GitHub).
+                  {t("If the endpoint is still the placeholder, configure the releases repository in tauri.conf.json (or use the GitHub release workflow).")}
                 </span>
               </>
             )}
 
             <span className="field-hint">
-              As atualizações são assinadas (minisign). O app só instala um
-              pacote cuja assinatura combine com a chave pública embutida.
+              {t("Updates are signed with minisign. The app only installs a package whose signature matches the embedded public key.")}
             </span>
           </div>
 
           <div className="settings-section">
-            <h2>Busca e índice</h2>
+            <h2>{t("Search & index")}</h2>
             <div className="settings-grid">
               <label className="check-row">
                 <input
@@ -982,7 +1009,7 @@ function App() {
                     updateSettings({ includeApps: event.target.checked })
                   }
                 />
-                <span>Buscar aplicativos</span>
+                <span>{t("Search applications")}</span>
               </label>
               <label className="check-row">
                 <input
@@ -992,10 +1019,10 @@ function App() {
                     updateSettings({ includeFiles: event.target.checked })
                   }
                 />
-                <span>Buscar arquivos</span>
+                <span>{t("Search files")}</span>
               </label>
               <label className="field">
-                <span className="field-label">Máximo de resultados</span>
+                <span className="field-label">{t("Maximum results")}</span>
                 <input
                   className="text-input"
                   type="number"
@@ -1012,11 +1039,11 @@ function App() {
             </div>
 
             <div className="field">
-              <span className="field-label">Pastas indexadas</span>
+              <span className="field-label">{t("Indexed folders")}</span>
               <div className="dir-list">
                 {settings.indexDirs.length === 0 && (
                   <span className="field-hint">
-                    Padrão: Documentos, Área de Trabalho e Downloads.
+                    {t("Default: Documents, Desktop, and Downloads.")}
                   </span>
                 )}
                 {settings.indexDirs.map((dir) => (
@@ -1026,7 +1053,7 @@ function App() {
                       className="secondary"
                       onClick={() => removeIndexDir(dir)}
                     >
-                      Remover
+                      {t("Remove")}
                     </button>
                   </div>
                 ))}
@@ -1036,7 +1063,7 @@ function App() {
                   className="text-input"
                   value={newIndexDir}
                   onChange={(event) => setNewIndexDir(event.target.value)}
-                  placeholder="C:\caminho\para\indexar"
+                  placeholder={t("C:\\path\\to\\index")}
                   spellCheck={false}
                 />
                 <button
@@ -1044,20 +1071,20 @@ function App() {
                   disabled={!newIndexDir.trim()}
                   onClick={() => addIndexDir(newIndexDir)}
                 >
-                  Adicionar
+                  {t("Add")}
                 </button>
                 <button
                   className="secondary"
                   onClick={() => void pickIndexDir()}
                 >
-                  Escolher…
+                  {t("Choose…")}
                 </button>
               </div>
             </div>
           </div>
 
           <div className="settings-section">
-            <h2>Clipboard</h2>
+            <h2>{t("Clipboard")}</h2>
             <div className="settings-grid">
               <label className="check-row">
                 <input
@@ -1067,10 +1094,10 @@ function App() {
                     updateSettings({ clipboardEnabled: event.target.checked })
                   }
                 />
-                <span>Salvar histórico da área de transferência</span>
+                <span>{t("Save clipboard history")}</span>
               </label>
               <label className="field">
-                <span className="field-label">Máximo de itens</span>
+                <span className="field-label">{t("Maximum items")}</span>
                 <input
                   className="text-input"
                   type="number"
@@ -1086,7 +1113,7 @@ function App() {
           </div>
 
           <div className="settings-section">
-            <h2>Janelas</h2>
+            <h2>{t("Windows")}</h2>
             <label className="check-row">
               <input
                 type="checkbox"
@@ -1095,7 +1122,7 @@ function App() {
                   updateSettings({ autoApplyRules: event.target.checked })
                 }
               />
-              <span>Aplicar regras automaticamente a janelas novas</span>
+              <span>{t("Apply rules automatically to new windows")}</span>
             </label>
             <label className="check-row">
               <input
@@ -1105,7 +1132,7 @@ function App() {
                   updateSettings({ restoreLastLayout: event.target.checked })
                 }
               />
-              <span>Reaplicar o último layout ao iniciar</span>
+              <span>{t("Reapply the last layout at startup")}</span>
             </label>
           </div>
 
@@ -1120,10 +1147,10 @@ function App() {
                     updateSettings({ mcpEnabled: event.target.checked })
                   }
                 />
-                <span>Servidor MCP habilitado</span>
+                <span>{t("MCP server enabled")}</span>
               </label>
               <label className="field">
-                <span className="field-label">Porta HTTP/SSE</span>
+                <span className="field-label">{t("HTTP/SSE port")}</span>
                 <input
                   className="text-input"
                   type="number"
@@ -1137,14 +1164,14 @@ function App() {
               </label>
             </div>
             <span className="field-hint">
-              Alterações de servidor/porta são aplicadas ao reiniciar o app.
+              {t("Server/port changes are applied when the app restarts.")}
             </span>
           </div>
 
           <div className="settings-section">
-            <h2>Extensões</h2>
+            <h2>{t("Extensions")}</h2>
             <label className="field">
-              <span className="field-label">URL da loja</span>
+              <span className="field-label">{t("Store URL")}</span>
               <input
                 className="text-input"
                 value={settings.storeUrl}
@@ -1155,14 +1182,14 @@ function App() {
               />
             </label>
             <label className="field">
-              <span className="field-label">Caminho do Deno (opcional)</span>
+              <span className="field-label">{t("Deno path (optional)")}</span>
               <input
                 className="text-input"
                 value={settings.denoPath}
                 onChange={(event) =>
                   updateSettings({ denoPath: event.target.value })
                 }
-                placeholder="Deixe vazio para detectar automaticamente"
+                placeholder={t("Leave empty to detect automatically")}
                 spellCheck={false}
               />
             </label>
@@ -1174,10 +1201,10 @@ function App() {
               onClick={() => void saveSettings()}
               disabled={settingsBusy}
             >
-              {settingsBusy ? "Salvando…" : "Salvar"}
+              {settingsBusy ? t("Saving…") : t("Save")}
             </button>
             <button className="secondary" onClick={() => void reindexFiles()}>
-              Reindexar arquivos
+              {t("Reindex files")}
             </button>
           </div>
 
@@ -1190,7 +1217,7 @@ function App() {
                 <code>{status.paths.workspace}</code>
               </div>
               <div>
-                <span>Banco</span>
+                <span>{t("Database")}</span>
                 <code>{status.paths.db}</code>
               </div>
               <div>
@@ -1231,7 +1258,7 @@ function App() {
           <input
             ref={inputRef}
             className="search"
-            placeholder="Buscar apps, arquivos, clipboard ou calcular…"
+            placeholder={t("Search apps, files, clipboard, or calculate…")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             spellCheck={false}
@@ -1240,7 +1267,7 @@ function App() {
 
           <ul className="results">
             {rows.length === 0 && (
-              <li className="empty">Nenhum resultado.</li>
+              <li className="empty">{t("No results.")}</li>
             )}
             {rows.map((row, index) => (
               <li
@@ -1271,13 +1298,13 @@ function App() {
           <footer className="footer">
             <span>
               <kbd>↑</kbd>
-              <kbd>↓</kbd> navegar
+              <kbd>↓</kbd> {t("navigate")}
             </span>
             <span>
-              <kbd>Enter</kbd> abrir
+              <kbd>Enter</kbd> {t("open")}
             </span>
             <span>
-              <kbd>Esc</kbd> fechar
+              <kbd>Esc</kbd> {t("close")}
             </span>
             <span className="workspace" title={status?.paths.workspace}>
               {status?.paths.workspace}

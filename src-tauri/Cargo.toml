@@ -1,6 +1,6 @@
 [package]
 name = "betastart"
-version = "0.1.1"
+version = "0.1.2"
 description = "Beta Start — launcher de produtividade e segundo cérebro"
 authors = ["Beta Start contributors"]
 license = "MIT"

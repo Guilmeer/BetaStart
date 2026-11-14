@@ -50,6 +50,10 @@ fn default_theme() -> String {
     "auto".into()
 }
 
+fn default_language() -> String {
+    "en".into()
+}
+
 fn default_store_url() -> String {
     "https://raw.githubusercontent.com/betastart-org/extensions/main/index.json".into()
 }
@@ -362,12 +366,15 @@ impl Default for ExtensionsConfig {
 pub struct AppearanceConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            language: default_language(),
         }
     }
 }
@@ -447,6 +454,11 @@ impl Config {
             self.search.index_dirs = default_index_dirs();
             changed = true;
         }
+        // Idioma suportado: inglês (padrão) ou português do Brasil.
+        if self.appearance.language != "pt-BR" && self.appearance.language != "en" {
+            self.appearance.language = default_language();
+            changed = true;
+        }
 
         changed
     }
@@ -476,6 +488,18 @@ pub fn deep_merge(base: &mut Value, patch: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_to_english_and_normalizes_unknown_language() {
+        let mut config = Config::default();
+        assert_eq!(config.appearance.language, "en");
+        config.appearance.language = "xx".into();
+        config.normalize();
+        assert_eq!(config.appearance.language, "en");
+        config.appearance.language = "pt-BR".into();
+        config.normalize();
+        assert_eq!(config.appearance.language, "pt-BR");
+    }
 
     #[test]
     fn saves_config_atomically_and_reloads() {
