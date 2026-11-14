@@ -1,36 +1,37 @@
 # Beta Start
 
-Launcher/centro de produtividade estilo Raycast — gratuito e open-source (MIT).
-Uma janela flutuante central para abrir apps, buscar arquivos, rodar comandos de extensões,
-gerenciar janelas e acessar um "segundo cérebro" de memória + tasks, integrável a IAs via MCP.
+A free, open-source (MIT) Raycast-style launcher and productivity hub.
+A central floating window to launch apps, search files, run extension commands,
+manage windows, and access a memory + tasks "second brain", with AI integration
+through MCP.
 
-- Arquitetura completa: [`ARCH.md`](./ARCH.md)
-- Prioridades e ordem de produção: [`ROADMAP.md`](./ROADMAP.md)
+- Full architecture: [`ARCH.md`](./ARCH.md)
+- Priorities and production order: [`ROADMAP.md`](./ROADMAP.md)
 
 ## Stack
 
-- **Tauri 2** (backend em Rust + frontend React/TypeScript)
-- **Deno como processo sidecar** (isolado) para as extensões TS/JS
-- **SQLite** para índices/clipboard/tasks/tokens + **JSON** para configuração
+- **Tauri 2** (Rust backend + React/TypeScript frontend)
+- **Deno as a sidecar process** (isolated) for TS/JS extensions
+- **SQLite** for indexes/clipboard/tasks/tokens + **JSON** for configuration
 - **MIT**
 
-## Pré-requisitos (Windows)
+## Prerequisites (Windows)
 
-- Node.js 20+ e npm
-- Rust (stable) — instale em <https://rustup.rs>
-- Visual Studio Build Tools com "Desktop development with C++"
-- Para extensões: Deno (o app baixa automaticamente em **Extensões**, se necessário)
+- Node.js 20+ and npm
+- Rust (stable) — install from <https://rustup.rs>
+- Visual Studio Build Tools with "Desktop development with C++"
+- For extensions: Deno (the app downloads it automatically in **Extensions** if needed)
 
-## Desenvolvimento
+## Development
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-A janela flutuante abre centralizada. Atalho padrão para abrir/fechar: **Alt + Espaço**.
-Fechar a janela (X/click fora) só a esconde — o app continua na bandeja do sistema.
-Para encerrar de vez, use **Sair** no menu da bandeja.
+The floating window opens centered. Default shortcut to open/close: **Alt + Space**.
+Closing the window (X/click outside) only hides it — the app keeps running in the
+system tray. To quit completely, use **Quit** in the tray menu.
 
 ## Build
 
@@ -38,75 +39,78 @@ Para encerrar de vez, use **Sair** no menu da bandeja.
 npm run tauri build
 ```
 
-Com `createUpdaterArtifacts` ligado, o build de release precisa das chaves de
-assinatura (veja [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md)). Para facilitar:
+With `createUpdaterArtifacts` enabled, release builds require the signing keys
+(see [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md)). For convenience:
 
 ```powershell
-# build local; -Repo usuario/repo também aponta o updater para o GitHub
-powershell -ExecutionPolicy Bypass -File scripts\build-signed.ps1 -Repo seu-usuario/BetaStart
+# local signed build; -Repo owner/repo also points the updater at GitHub
+powershell -ExecutionPolicy Bypass -File scripts\build-signed.ps1 -Repo your-user/BetaStart
 ```
 
-## Auto-update assinado
+## Signed auto-update
 
-O app usa `tauri-plugin-updater` com assinatura **minisign**: cada release é
-assinado com a chave privada e o app só instala pacotes cuja assinatura combine
-com a chave pública embutida. A tela **⚙ Configurações → Atualizações** verifica,
-baixa e instala novas versões.
+The app uses `tauri-plugin-updater` with **minisign** signatures: every release is
+signed with the private key, and the app only installs packages whose signature
+matches the embedded public key. The **⚙ Settings → Updates** screen checks for,
+downloads, and installs new versions.
 
-O guia completo (chaves, Secrets do GitHub, versão/tag, build local assinado e
-teste com servidor local) está em [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md).
+The complete guide (keys, GitHub Secrets, version/tag, local signed builds, and
+testing with a local server) is in [`docs/AUTO_UPDATE.md`](./docs/AUTO_UPDATE.md).
 
-## Como usar
+## Usage
 
-- **Alt + Espaço** abre/fecha o launcher.
-- Digite para buscar **apps**, **arquivos**, **clipboard**, comandos de extensões e
-  **calculadora** (ex.: `12*8+3`).
-- **🔌 MCP**: servidor para IAs (stdio + HTTP/SSE) com tokens e escopos, resources, prompts e auditoria.
-- **🧠 Memória & Tasks**: notas, projetos, busca, tasks com subtasks, lista/kanban e lembretes.
-- **🪟 Gerenciador de janelas**: salvar/aplicar layouts, regras por app e multi-monitor.
-- **📋 Área de transferência**: histórico com filtro, fixar/excluir e limpar não fixados.
-- **⚙ Configurações**: atalho, tecla Win, tema, inicialização com o Windows, busca, clipboard, MCP e extensões.
-- **🧩 Extensões**: instalar/gerenciar extensões e o runtime Deno.
-- **Busca rápida na web**: `g`, `yt`, `gh`, `w`, `ddg` ou `maps` + termo.
-- **Esc** fecha; fechar a janela manda para a bandeja.
+- **Alt + Space** opens/closes the launcher.
+- Type to search **apps**, **files**, **clipboard**, extension commands, and the
+  **calculator** (e.g. `12*8+3`).
+- **🔌 MCP**: server for AI clients (stdio + HTTP/SSE) with tokens and scopes,
+  resources, prompts, and audit logs.
+- **🧠 Memory & Tasks**: notes, projects, search, tasks with subtasks, list/kanban,
+  and reminders.
+- **🪟 Window manager**: save/apply layouts, per-app rules, and multi-monitor support.
+- **📋 Clipboard**: filterable history, pin/unpin, delete, and clear unpinned items.
+- **⚙ Settings**: shortcut, Windows key, theme, start with Windows, search, clipboard,
+  MCP, and extensions.
+- **🧩 Extensions**: install/manage extensions and the Deno runtime.
+- **Quick web search**: `g`, `yt`, `gh`, `w`, `ddg`, or `maps` + term.
+- **Esc** closes; closing the window sends it to the tray.
 
-## Extensões
+## Extensions
 
-Uma extensão é uma pasta com `extension.json` (manifesto) + código TS/JS:
+An extension is a folder with `extension.json` (manifest) + TS/JS code:
 
 ```
-minha-extensao/
-├── extension.json   # id, entry, comandos, permissões
-└── main.ts          # importa @betastart/sdk
+my-extension/
+├── extension.json   # id, entry, commands, permissions
+└── main.ts          # imports @betastart/sdk
 ```
 
-Exemplo pronto em [`examples/hello-extension`](./examples/hello-extension).
+A ready-to-use example is in [`examples/hello-extension`](./examples/hello-extension).
 
-### Instalar o exemplo
+### Installing the example
 
-1. Abra **🧩 Extensões**.
-2. Em **Pasta local**, use `E:\DOCUMENTOS\Opencode\BetterStart\examples\hello-extension`.
-3. Clique em **Instalar**, depois em **Aprovar permissões**.
-4. Digite `Hello` ou `data` no launcher.
+1. Open **🧩 Extensions**.
+2. Under **Local folder**, use `<repo>\examples\hello-extension`.
+3. Click **Install**, then **Approve permissions**.
+4. Type `Hello` or `date` in the launcher.
 
-Também é possível instalar via **URL Git** ou pela **Loja** (um `index.json`, remoto ou
-local — veja [`examples/store/index.json`](./examples/store/index.json)).
+You can also install from a **Git URL** or the **Store** (an `index.json`, remote or
+local — see [`examples/store/index.json`](./examples/store/index.json)).
 
 ### SDK
 
-Além de `registerCommand` e `ui`, o SDK oferece acesso às APIs do host (sujeito às
-permissões aprovadas no manifesto):
+Besides `registerCommand` and `ui`, the SDK exposes host APIs (subject to the
+permissions approved in the manifest):
 
 ```ts
 import { memory, projects, tasks, windows, search, clipboard } from "@betastart/sdk";
 
-const lista = await projects.list();
-const brief = await projects.brief("meu-projeto");
-const notas = await memory.search("decisão", { project: "meu-projeto" });
-const task = await tasks.create({ title: "Revisar layout", project: "meu-projeto" });
-const janelas = await windows.list();
-const resultados = await search.query("relatório");
-const texto = await clipboard.read();
+const list = await projects.list();
+const brief = await projects.brief("my-project");
+const notes = await memory.search("decision", { project: "my-project" });
+const task = await tasks.create({ title: "Review layout", project: "my-project" });
+const windowsList = await windows.list();
+const results = await search.query("report");
+const text = await clipboard.read();
 ```
 
 - `memory`: `list`, `read`, `write`, `search`
@@ -117,109 +121,111 @@ const texto = await clipboard.read();
 - `search`: `query`
 - `clipboard`: `write`, `read`
 
-Exemplo completo em [`examples/brain-extension`](./examples/brain-extension). O host
-valida cada chamada pelo token efêmero da execução e pelas permissões do manifesto.
+A complete example is in [`examples/brain-extension`](./examples/brain-extension).
+The host validates every call using the execution's ephemeral token and the
+manifest permissions.
 
-## Memória & Tasks
+## Memory & Tasks
 
-Abra **🧠** na barra superior (a janela aumenta automaticamente).
+Open **🧠** in the top bar (the window grows automatically).
 
-- A **memória principal** fica em `global/`; cada projeto em `projects/<slug>/`.
-- Tudo é **Markdown real** com frontmatter YAML — você pode abrir/editar fora do app e
-  versionar com Git.
-- No app você pode:
-  - criar **projetos**, **notas** e **tasks**;
-  - editar título, tags e corpo;
-  - buscar por **palavra-chave** dentro do projeto (ou em tudo);
-  - alternar tasks entre **Lista** e **Kanban**;
-  - criar **subtasks** (tarefa pai);
-  - definir **vencimento** e **lembrete** (notificação do Windows).
-- O índice é atualizado ao abrir a tela, ao salvar e no boot. O botão **Atualizar**
-  reindexa manualmente.
+- The **main memory** lives in `global/`; each project lives in `projects/<slug>/`.
+- Everything is **real Markdown** with YAML frontmatter — you can open/edit it
+  outside the app and version it with Git.
+- In the app you can:
+  - create **projects**, **notes**, and **tasks**;
+  - edit title, tags, and body;
+  - search by **keyword** within a project (or across everything);
+  - switch tasks between **List** and **Kanban**;
+  - create **subtasks** (parent task);
+  - set **due dates** and **reminders** (Windows notifications).
+- The index is refreshed when the screen opens, when saving, and at boot. The
+  **Refresh** button reindexes manually.
 
-Formato de uma task:
+Task format:
 
 ```md
 ---
 type: task
 id: "uuid"
-title: "Minha tarefa"
+title: "My task"
 status: todo            # todo | in_progress | done | blocked | cancelled
 priority: high          # high | medium | low
 due: "2026-12-01T10:00"
 remind: "2026-12-01T09:30"
-tags: [trabalho, urgente]
-parent: "id-da-task-pai"  # opcional (subtask)
+tags: [work, urgent]
+parent: "parent-task-id"  # optional (subtask)
 ---
-Corpo/descrição…
+Body/description…
 ```
 
-### Grafo
+### Graph
 
-No painel direito da tela de memória, alterne entre **Tasks** e **Grafo**. O grafo
-force-directed (`d3-force`) mostra projetos, notas, tasks e tags, com arestas de:
+In the right panel of the memory screen, switch between **Tasks** and **Graph**.
+The force-directed graph (`d3-force`) shows projects, notes, tasks, and tags, with
+edges for:
 
-- **projeto** — projeto → item;
+- **project** — project → item;
 - **tag** — tag → item;
-- **parent** — task pai → subtask;
-- **link** — `[[Outra nota]]` encontrado no corpo.
+- **parent** — parent task → subtask;
+- **link** — `[[Another note]]` found in the body.
 
-No editor, os links aparecem como **chips**: ciano quando o destino existe e **vermelho**
-quando não existe. Destinos não encontrados também aparecem como **nós vermelhos** no grafo.
-O grafo é atualizado após salvar/criar/excluir.
+In the editor, links appear as **chips**: cyan when the target exists and **red**
+when it doesn't. Missing targets also appear as **red nodes** in the graph. The
+graph refreshes after save/create/delete.
 
-Clique em um nó que tenha arquivo para abri-lo. O filtro de projeto também filtra o grafo.
+Click a node that has a file to open it. The project filter also filters the graph.
 
-## Gerenciador de janelas
+## Window Manager
 
-Abra **🪟** na barra superior.
+Open **🪟** in the top bar.
 
-### Layouts com hotkey
+### Layouts with hotkeys
 
-1. Organize as janelas manualmente (ex.: navegador 25% à direita, Discord 75% à esquerda).
-2. Em **Layouts**, dê um nome. Para o atalho, **clique no campo e pressione a combinação**
-   (ex.: `Win+Shift+F7`) — o app entra em modo de escuta e grava o que você usou.
-3. Clique em **Salvar atual**.
-4. Pressione o atalho a qualquer momento para reaplicar o layout.
+1. Arrange windows manually (e.g. browser 25% on the right, Discord 75% on the left).
+2. Under **Layouts**, enter a name. For the shortcut, **click the field and press
+   the combination** (e.g. `Win+Shift+F7`) — the app listens and records it.
+3. Click **Save current**.
+4. Press the shortcut anytime to reapply the layout.
 
-> Se a combinação já estiver em uso (pelo launcher, por outro layout ou pelo sistema),
-> o campo fica com **borda vermelha** e mostra o motivo. Basta gravar outra.
+> If the combination is already in use (by the launcher, another layout, or the
+> system), the field gets a **red border** and shows the reason. Just record another.
 
-O layout guarda o processo e a posição em **pixels exatos** (além das frações), então
-reaplica com precisão na mesma configuração de monitores e escala proporcionalmente se a
-resolução mudar. Layouts salvos antes desta versão devem ser **re-salvos uma vez**.
+Layouts store the process and position in **exact pixels** (in addition to fractions),
+so they reapply precisely on the same monitor setup and scale proportionally if the
+resolution changes. Layouts saved before this version should be **re-saved once**.
 
-### Regras por app
+### Per-app rules
 
-Configure app (processo/título/classe), monitor e região (`x/y/w/h` como frações de 0 a 1).
-As regras são aplicadas **automaticamente** quando uma janela nova do app aparece
-(watcher ~1,2s) ou manualmente em **Aplicar regras agora**.
+Configure app (process/title/class), monitor, and region (`x/y/w/h` as fractions from
+0 to 1). Rules are applied **automatically** when a new window for the app appears
+(watcher ~1.2s) or manually with **Apply rules now**.
 
-Exemplo: `chrome` no monitor 1, `x=0.75, y=0, w=0.25, h=1` (direita, 25%).
-`discord` no monitor 1, `x=0, y=0, w=0.75, h=1` (esquerda, 75%).
+Example: `chrome` on monitor 1, `x=0.75, y=0, w=0.25, h=1` (right, 25%).
+`discord` on monitor 1, `x=0, y=0, w=0.75, h=1` (left, 75%).
 
 ### Multi-monitor
 
-Monitores são enumerados com resolução e área útil; layouts e regras guardam o índice
-do monitor. Janelas maximizadas são restauradas antes de serem reposicionadas.
+Monitors are enumerated with resolution and work area; layouts and rules store the
+monitor index. Maximized windows are restored before being repositioned.
 
-### Runtime e segurança
+### Runtime and security
 
-- Cada comando roda em um **processo Deno separado** (isolamento real).
-- Permissões declaradas no manifesto e aprovadas pelo usuário:
+- Each command runs in a **separate Deno process** (real isolation).
+- Permissions are declared in the manifest and approved by the user:
   `fs:read`, `fs:write`, `network`, `shell`, `clipboard:read`, `clipboard:write`,
   `memory`, `tasks`, `windows`, `search`.
-- O Deno recebe apenas as flags correspondentes às permissões aprovadas.
-- Comandos retornam ações seguras: `{ type: "message" }`, `{ type: "copy" }` ou
-  `{ type: "open" }` (com checagem de permissão no host).
+- Deno receives only the flags matching the approved permissions.
+- Commands return safe actions: `{ type: "message" }`, `{ type: "copy" }`, or
+  `{ type: "open" }` (with a host-side permission check).
 
 ## MCP
 
-Abra **🔌** na barra superior.
+Open **🔌** in the top bar.
 
-1. Crie um cliente, escolha os **escopos** e clique em **Gerar token**.
-2. Copie o token (exibido **uma única vez**) e o snippet de configuração.
-3. Revogue clientes a qualquer momento.
+1. Create a client, choose the **scopes**, and click **Generate token**.
+2. Copy the token (shown **only once**) and the configuration snippet.
+3. Revoke clients at any time.
 
 ### stdio (Claude Desktop, Cursor, etc.)
 
@@ -227,19 +233,19 @@ Abra **🔌** na barra superior.
 {
   "mcpServers": {
     "betastart": {
-      "command": "C:\\caminho\\para\\betastart.exe",
+      "command": "C:\\path\\to\\betastart.exe",
       "args": ["mcp", "--token", "bst_..."]
     }
   }
 }
 ```
 
-### HTTP/SSE local
+### Local HTTP/SSE
 
 - SSE: `http://127.0.0.1:19000/sse?token=<token>`
-- POST JSON-RPC: `http://127.0.0.1:19000/mcp`
+- JSON-RPC POST: `http://127.0.0.1:19000/mcp`
 - Health: `GET /health`
-- O servidor sobe junto com o app quando `mcp.http.enabled` está ligado.
+- The server starts with the app when `mcp.http.enabled` is on.
 
 ### Tools
 
@@ -250,206 +256,216 @@ Abra **🔌** na barra superior.
 `windows.save_layout`, `extensions.list`, `extensions.run`, `search.query`,
 `clipboard.list`, `settings.get`, `settings.set`.
 
-Também há **resources** (`resources/list` e `resources/read` expõem as notas/tasks como
-Markdown) e **prompts** prontos (`project-brief`, `plan-project`, `review-tasks` e
-`capture-note`). A tela 🔌 mostra as **últimas chamadas** (cliente, tool, sucesso/erro e
-detalhe) para diagnóstico.
+There are also **resources** (`resources/list` and `resources/read` expose notes/tasks
+as Markdown) and ready-made **prompts** (`project-brief`, `plan-project`,
+`review-tasks`, and `capture-note`). The 🔌 screen shows the **latest calls**
+(client, tool, success/error, and detail) for diagnostics.
 
-Respostas pensadas para gastar poucos tokens:
+Responses are designed to use fewer tokens:
 
-- `tasks.list` vem **compacto** (`id`, `title`, `status`, `priority`, `due`, tags):
-  ~166 bytes/task contra ~417 do registro completo — use `compact: false` se
-  precisar do caminho do arquivo.
-- `tasks.create_many` cria um plano inteiro numa chamada, reindexando uma vez só.
-- `project.brief` devolve um digest do projeto (metadados, notas com caminho
-  **relativo**, contagem de tasks por status e as primeiras tasks abertas) em
-  ~1,3 KB, sem precisar encadear `project.list` + `memory.list` + `tasks.list`.
-- `memory.read` aceita o caminho relativo devolvido pelo brief, junto com `project`.
+- `tasks.list` is **compact** (`id`, `title`, `status`, `priority`, `due`, tags):
+  ~166 bytes/task versus ~417 for the full record — use `compact: false` if you
+  need the file path.
+- `tasks.create_many` creates an entire plan in one call, reindexing only once.
+- `project.brief` returns a project digest (metadata, notes with **relative** paths,
+  task count by status, and the first open tasks) in ~1.3 KB, without chaining
+  `project.list` + `memory.list` + `tasks.list`.
+- `memory.read` accepts the relative path returned by the brief, along with `project`.
 
-Fluxo econômico típico:
-
-```json
-{ "project": "prisma-historico" }                          // project.brief
-{ "project": "prisma-historico", "path": "MEMORIA.md" }     // memory.read
-{ "project": "prisma-historico", "tasks": [ { "title": "..." } ] }  // tasks.create_many
-{ "project": "prisma-historico", "status": "todo" }         // tasks.list
-```
-
-Para trabalhar num projeto que já existe no disco, use `project.link` (a pasta é
-indexada no lugar, sem copiar nada):
+Typical token-efficient flow:
 
 ```json
-{ "root": "E:\\projetos\\meu-projeto", "ignore": ["examples/", "vendor/"] }
+{ "project": "my-project" }                          // project.brief
+{ "project": "my-project", "path": "MEMORY.md" }     // memory.read
+{ "project": "my-project", "tasks": [ { "title": "..." } ] }  // tasks.create_many
+{ "project": "my-project", "status": "todo" }         // tasks.list
 ```
 
-A UI reflete o vínculo em ~2s, sem reiniciar o app.
+To work on a project that already exists on disk, use `project.link` (the folder is
+indexed in place, nothing is copied):
 
-### Diagnóstico do stdio
+```json
+{ "root": "E:\\projects\\my-project", "ignore": ["examples/", "vendor/"] }
+```
 
-Se um cliente MCP não conectar, o servidor grava um log em
-`%APPDATA%\com.betastart.app\mcp-stdio.log` (início, tempo de carga, token,
-EOF, panics) — o mesmo arquivo pode ser aberto em **🔌 → Log de diagnóstico**.
-Defina `BETASTART_MCP_TRACE=1` para registrar também cada método recebido.
+The UI reflects the link in ~2s, without restarting the app.
 
-Como ler o log:
+### stdio diagnostics
 
-- termina em `stdin fechado (EOF)` → o cliente encerrou a conexão;
-- termina em `pronto em …` e não tem EOF → o processo foi **morto por fora**;
-- termina em `erro (exit N)` → falha real do servidor (o motivo está na linha).
+If an MCP client cannot connect, the server writes a log to
+`%APPDATA%\com.betastart.app\mcp-stdio.log` (start, load time, token, EOF, panics) —
+the same file can be opened from **🔌 → Diagnostic log**. Set
+`BETASTART_MCP_TRACE=1` to also log every received method.
 
-O código `255` no Windows costuma ser o **OpenCode matando o processo** (por
-timeout no `initialize` ou após um erro de transporte), não um crash do Beta
-Start. Nesse caso, `opencode reload` (ou qualquer escrita no `opencode.json`)
-força o respawn — o OpenCode ainda não reinicia sozinho um servidor que caiu
+How to read the log:
+
+- ends with `stdin fechado (EOF)` → the client closed the connection;
+- ends with `pronto em …` and has no EOF → the process was **killed externally**;
+- ends with `erro (exit N)` → a real server failure (the reason is on that line).
+
+Exit code `255` on Windows is usually **OpenCode killing the process** (initialize
+timeout or transport error), not a Beta Start crash. In that case, `opencode reload`
+(or any write to `opencode.json`) forces a respawn — OpenCode does not yet restart a
+crashed server automatically
 ([issue #53226](https://github.com/anomalyco/opencode/issues/53226)).
 
 ### CLI
 
 ```bash
-betastart mcp-token "Nome do cliente"   # cria cliente com todos os escopos e imprime o token
+betastart mcp-token "Client name"   # creates a client with all scopes and prints the token
 ```
 
-## Estrutura do repositório
+## Repository structure
 
 ```
 src-tauri/src/
 ├── main.rs            # entrypoint
-├── lib.rs             # builder Tauri, plugins, setup
-├── commands.rs        # comandos (IPC) expostos ao frontend
-├── error.rs           # AppError unificado
-├── state.rs           # AppState (config + conexão SQLite)
-├── models.rs          # DTOs compartilhados
+├── lib.rs             # Tauri builder, plugins, setup
+├── commands.rs        # IPC commands exposed to the frontend
+├── error.rs           # unified AppError
+├── state.rs           # AppState (config + SQLite connection)
+├── models.rs          # shared DTOs
 ├── core/
 │   ├── config.rs      # config.json (load/save/patch/normalize)
-│   ├── paths.rs       # diretórios do app, workspace e runtime
-│   ├── window.rs      # show/hide/toggle da janela
-│   ├── tray.rs        # ícone e menu da bandeja
-│   ├── hotkey.rs      # hotkey global do launcher
-│   └── win_hook.rs    # hook da tecla Win (low-level)
+│   ├── paths.rs       # app, workspace, and runtime directories
+│   ├── window.rs      # window show/hide/toggle
+│   ├── tray.rs        # tray icon and menu
+│   ├── hotkey.rs      # global launcher hotkey
+│   └── win_hook.rs    # low-level Win key hook
 ├── db/
-│   ├── mod.rs         # abertura + migrações
-│   ├── schema.rs      # schema SQL (v4)
-│   ├── apps.rs        # índice/busca de apps
-│   ├── files.rs       # índice/busca de arquivos
-│   ├── clipboard.rs   # histórico de clipboard
-│   ├── extensions.rs  # registro/comandos/permissões de extensões
-│   ├── windows.rs     # layouts/regras de janelas
-│   ├── memory.rs      # índice/busca de memória
-│   └── tasks.rs       # índice de tasks + lembretes
-├── indexer/           # indexação de arquivos em background
-├── clipboard_watcher.rs # captura de clipboard em background
+│   ├── mod.rs         # open + migrations
+│   ├── schema.rs      # SQL schema
+│   ├── apps.rs        # app index/search
+│   ├── files.rs       # file index/search (FTS5)
+│   ├── clipboard.rs   # clipboard history (text + images)
+│   ├── extensions.rs  # extension registry/commands/permissions
+│   ├── windows.rs     # window layouts/rules
+│   ├── memory.rs      # memory index/search (FTS5)
+│   ├── tasks.rs       # task index + reminders
+│   └── usage.rs       # launcher usage ranking
+├── indexer/           # background file indexing
+├── clipboard_watcher.rs # background clipboard capture
 ├── memory/
-│   └── mod.rs         # frontmatter YAML, links wiki, scan/indexação
+│   └── mod.rs         # YAML frontmatter, wiki links, scan/indexing
 ├── graph/
-│   └── mod.rs         # grafo de projetos/notas/tasks/tags/links
+│   └── mod.rs         # projects/notes/tasks/tags/links graph
 ├── mcp/
-│   ├── mod.rs         # contexto, JSON-RPC, stdio
-│   ├── tools.rs       # definições e implementação das tools
-│   ├── http.rs        # HTTP/SSE local (axum)
-│   └── auth.rs        # tokens Argon2
-├── memory_api.rs      # comandos de memória + tasks + grafo
-├── mcp_api.rs         # comandos de tokens/clientes MCP
-├── reminder_watcher.rs # notificações de lembretes
-├── window_manager/    # layouts, regras, multi-monitor
-├── window_watcher.rs  # aplica regras a janelas novas
+│   ├── mod.rs         # context, JSON-RPC, stdio, resources, prompts
+│   ├── tools.rs       # tool definitions and implementation
+│   ├── http.rs        # local HTTP/SSE (axum)
+│   └── auth.rs        # Argon2 tokens
+├── memory_api.rs      # memory + tasks + graph commands
+├── mcp_api.rs         # MCP token/client commands
+├── reminder_watcher.rs # reminder notifications
+├── window_manager/    # layouts, rules, multi-monitor
+├── window_watcher.rs  # applies rules to new windows
 ├── extensions/
-│   ├── mod.rs         # manifesto, instalação (pasta/Git), validação
-│   └── runtime.rs     # Deno sidecar, runner, permissões, execução
+│   ├── mod.rs         # manifest, installation (folder/Git), validation
+│   ├── api.rs         # local host API for the extension SDK
+│   └── runtime.rs     # Deno sidecar, runner, permissions, execution
 └── platform/
-    ├── mod.rs         # tipos + launch (Windows/Linux)
-    ├── apps.rs        # varredura do Menu Iniciar (.lnk)
-    └── windows.rs     # enumeração de janelas + monitores (Win32)
-src/                   # frontend React (launcher, settings, extensões, janelas, memória)
-examples/              # extensão de exemplo + índice de loja
+    ├── mod.rs         # types + launch (Windows/Linux)
+    ├── autostart.rs   # start with Windows
+    ├── icons.rs       # real Windows icon extraction
+    ├── apps.rs        # Start Menu (.lnk) scan
+    └── windows.rs     # window + monitor enumeration (Win32)
+src/                   # React frontend (launcher, settings, extensions, windows, memory, clipboard)
+examples/              # example extension + store index
+docs/                  # guides (signed auto-update)
+scripts/               # signed build helper
 ```
 
-## Estado atual — Fases 0 a 6
+## Current state — Phases 0 to 6
 
-**Fase 0 — Fundação**
-- [x] Config persistente + migrações automáticas
-- [x] Banco SQLite com schema completo (v4)
-- [x] Índice de apps do Menu Iniciar + busca
-- [x] Janela flutuante, bandeja, fechar→bandeja
-- [x] Hotkey global (Alt+Espaço)
-- [x] Enumeração de janelas (Win32)
+**Phase 0 — Foundation**
+- [x] Persistent config + automatic migrations
+- [x] SQLite database with the full schema
+- [x] Start Menu app index + search
+- [x] Floating window, tray, close→tray
+- [x] Global hotkey (Alt+Space)
+- [x] Window enumeration (Win32)
 
-**Fase 1 — Launcher MVP**
-- [x] Hook da tecla Win (modo "substituir")
-- [x] Busca de arquivos com indexação em background
-- [x] Histórico de clipboard + busca
-- [x] Calculadora inline
-- [x] Resultados unificados
-- [x] Configurações (atalho + modo Win)
+**Phase 1 — Launcher MVP**
+- [x] Win key hook ("replace" mode)
+- [x] File search with background indexing
+- [x] Clipboard history + search
+- [x] Inline calculator
+- [x] Unified results
+- [x] Settings (shortcut + Win key mode)
 
-**Fase 2 — Extensões**
-- [x] Manifesto `extension.json` com validação
-- [x] Instalação via pasta local, Git e loja (`index.json`)
-- [x] Runtime Deno sidecar com detecção/download automático
-- [x] Permissões declaradas e aprovação pelo usuário
-- [x] Comandos de extensão no launcher
-- [x] SDK `@betastart/sdk` (`registerCommand`, `ui`, `clipboard`)
-- [x] Tela 🧩 Extensões (instalar, ativar, aprovar, desinstalar)
-- [x] Extensão de exemplo + testes end-to-end
+**Phase 2 — Extensions**
+- [x] `extension.json` manifest with validation
+- [x] Installation from local folder, Git, and store (`index.json`)
+- [x] Deno sidecar runtime with automatic detection/download
+- [x] Declared permissions and user approval
+- [x] Extension commands in the launcher
+- [x] `@betastart/sdk` (`registerCommand`, `ui`, `clipboard`, memory/tasks/windows/search)
+- [x] 🧩 Extensions screen (install, enable, approve, uninstall)
+- [x] Example extension + end-to-end tests + per-run logs
 
-**Fase 3 — Gerenciador de janelas**
-- [x] Enumeração de monitores com área útil (multi-monitor)
-- [x] Enumeração de janelas com nome do processo
-- [x] Salvar/restaurar layout atual
-- [x] Hotkey por layout (dispatcher de atalhos)
-- [x] Regras por app (processo/título/classe, monitor, frações)
-- [x] Watcher que aplica regras a janelas novas
-- [x] **Captura de hotkey por gravação** (clique → pressione → salva)
-- [x] **Detecção de conflito** com borda vermelha (launcher, layouts, sistema)
-- [x] Layout com **pixels exatos** (reaplica sem deslocamento)
-- [x] Tela 🪟 Gerenciador de janelas
-- [x] Testes (hotkeys `Win+...`, DAO de layouts/regras, enumeração Win32, precisão de pixels)
+**Phase 3 — Window Manager**
+- [x] Monitor enumeration with work area (multi-monitor)
+- [x] Window enumeration with process name
+- [x] Save/restore current layout
+- [x] Per-layout hotkey (shortcut dispatcher)
+- [x] Per-app rules (process/title/class, monitor, fractions)
+- [x] Watcher that applies rules to new windows
+- [x] **Hotkey capture by recording** (click → press → save)
+- [x] **Conflict detection** with red border (launcher, layouts, system)
+- [x] Layouts with **exact pixels** (reapply without drift)
+- [x] 🪟 Window manager screen
+- [x] Window picker for creating rules
+- [x] Optional restore of the last layout at startup
+- [x] Tests (Win+... hotkeys, layout/rule DAO, Win32 enumeration, pixel accuracy)
 
-**Fase 4 — Memória + Tasks**
-- [x] Workspace de arquivos Markdown com frontmatter YAML
-- [x] Projetos (`projects/<slug>/`) + memória principal (`global/`)
-- [x] Indexação em SQLite (`memory_index` + `tasks_index`) e busca por escopo
-- [x] CRUD de notas e tasks direto nos arquivos
-- [x] Tasks com status, prioridade, due, tags, **subtasks** e lembretes
-- [x] Visualização **lista** e **kanban**
-- [x] Notificações de lembrete (plugin de notificação)
-- [x] Tela 🧠 Memória & Tasks (redimensiona a janela)
-- [x] Testes de frontmatter + indexação end-to-end
+**Phase 4 — Memory + Tasks**
+- [x] Markdown workspace with YAML frontmatter
+- [x] Projects (`projects/<slug>/`) + main memory (`global/`)
+- [x] SQLite indexing (`memory_index` + `tasks_index`) and scoped search
+- [x] Note and task CRUD directly in files
+- [x] Tasks with status, priority, due date, tags, **subtasks**, and reminders
+- [x] **List** and **kanban** views
+- [x] Reminder notifications (notification plugin)
+- [x] 🧠 Memory & Tasks screen (resizes the window)
+- [x] Autosave, backlinks, and daily note
+- [x] Frontmatter + end-to-end indexing tests
 
-**Fase 5 — Grafo**
-- [x] Índice de links wiki (`[[...]]`) por nota
-- [x] Grafo de projetos, notas, tasks e tags (migration v4)
-- [x] Arestas de projeto, tag, parent e link
-- [x] Visualização force-directed (`d3-force`) no painel lateral
-- [x] Clique em um nó abre o arquivo correspondente
-- [x] Teste do builder do grafo
+**Phase 5 — Graph**
+- [x] Wiki link (`[[...]]`) index per note
+- [x] Graph of projects, notes, tasks, and tags
+- [x] Project, tag, parent, and link edges
+- [x] Force-directed view (`d3-force`) in the side panel
+- [x] Clicking a node opens the corresponding file
+- [x] Graph builder test
 
-**Fase 6 — MCP**
-- [x] Servidor MCP (JSON-RPC) com 21 tools
-- [x] Transporte **stdio** (`betastart mcp --token ...`)
-- [x] Transporte **HTTP/SSE** local (`/sse`, `/messages`, `/mcp`, `/health`)
-- [x] Tokens com hash Argon2 + escopos por cliente
-- [x] Tela 🔌 MCP (criar/revogar tokens, escopos, snippet)
-- [x] CLI `betastart mcp-token "Nome"`
-- [x] Testes de initialize/tools/escopos/auth
+**Phase 6 — MCP**
+- [x] MCP server (JSON-RPC) with 21 tools
+- [x] **stdio** transport (`betastart mcp --token ...`)
+- [x] Local **HTTP/SSE** transport (`/sse`, `/messages`, `/mcp`, `/health`)
+- [x] Argon2 token hashes + per-client scopes
+- [x] 🔌 MCP screen (create/revoke tokens, scopes, snippet)
+- [x] `betastart mcp-token "Name"` CLI
+- [x] Resources, prompts, and call audit
+- [x] Initialize/tools/scopes/auth tests
 
-## Melhorias recentes
+## Recent improvements
 
-- **Extensões**: API local com token efêmero, SDK completo (memória, projetos, tasks,
-  janelas, busca e clipboard), logs por execução, download atômico do Deno e cache de versão.
-- **Launcher**: ícones reais dos apps, resultados ordenados por frequência/recência,
-  ações rápidas de busca na web (`g`, `yt`, `gh`, `w`, `ddg`, `maps`) e badges por
-  extensão do arquivo.
-- **Clipboard**: histórico de texto e imagens, filtro, fixar/excluir, copiar de volta
-  (inclusive imagens) e limpeza de itens não fixados.
-- **Busca**: FTS5 real para arquivos e memória, com fallback por substring.
-- **Memória**: autosave, painel de backlinks (`[[...]]`) e nota diária.
-- **Windows**: seletor de janelas abertas ao criar regras e opção de reaplicar o último
-  layout ao iniciar.
-- **Configurações**: tema claro/escuro/automático, iniciar com o Windows, diretórios de
-  índice, clipboard, MCP e extensões.
-- **MCP**: resources, prompts e auditoria das últimas chamadas.
-- **Qualidade**: CI no GitHub Actions e workflow de release com instalador NSIS.
+- **Extensions**: local API with ephemeral token, full SDK (memory, projects, tasks,
+  windows, search, and clipboard), per-run logs, atomic Deno download, and version cache.
+- **Launcher**: real app icons, results ranked by frequency/recency, quick web search
+  actions (`g`, `yt`, `gh`, `w`, `ddg`, `maps`), and file-extension badges.
+- **Clipboard**: text and image history, filter, pin/unpin, delete, copy back
+  (including images), and clear unpinned items.
+- **Search**: real FTS5 for files and memory, with substring fallback.
+- **Memory**: autosave, backlinks panel (`[[...]]`), and daily note.
+- **Windows**: open-window picker for rules and optional restore of the last layout
+  at startup.
+- **Settings**: light/dark/automatic theme, start with Windows, index folders,
+  clipboard, MCP, and extensions.
+- **MCP**: resources, prompts, and audit of the latest calls.
+- **Quality**: GitHub Actions CI and a release workflow with a signed NSIS installer
+  and updater artifacts.
 
-## Próximos passos
+## Next steps
 
-Siga o [`ROADMAP.md`](./ROADMAP.md): Fase 7 (distribuição — instalador + auto-update).
+Follow [`ROADMAP.md`](./ROADMAP.md): Phase 7 (distribution — installer + auto-update).
