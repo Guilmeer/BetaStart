@@ -119,6 +119,96 @@ pub async fn reindex_memory(app: AppHandle, state: State<'_, AppState>) -> AppRe
         .map_err(|e| AppError::Platform(format!("falha ao reindexar a memória: {e}")))?
 }
 
+/// Marcadores do bloco que o Beta Start mantém dentro do `AGENTS.md`.
+const GUIDANCE_BEGIN: &str = "<!-- betastart:begin -->";
+const GUIDANCE_END: &str = "<!-- betastart:end -->";
+
+fn strip_guidance_block(content: &str) -> String {
+    let Some(start) = content.find(GUIDANCE_BEGIN) else {
+        return content.trim().to_string();
+    };
+    let Some(offset) = content[start..].find(GUIDANCE_END) else {
+        return content.trim().to_string();
+    };
+    let end = start + offset + GUIDANCE_END.len();
+    let mut out = String::new();
+    out.push_str(content[..start].trim_end());
+    let tail = content[end..].trim_start();
+    if !tail.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(tail);
+    }
+    out.trim().to_string()
+}
+
+/// Bloco de instruções que o Beta Start mantém dentro do `AGENTS.md`.
+fn guidance_block(slug: &str) -> String {
+    format!(
+        "{GUIDANCE_BEGIN}\n\
+## Beta Start memory (MCP)\n\
+\n\
+This workspace is indexed by Beta Start on this machine and exposed through the\n\
+`betastart` MCP server. Query it instead of re-reading files:\n\
+\n\
+- `project.brief {{ \"project\": \"{slug}\" }}` — start here: notes, task counts, open tasks.\n\
+- `memory.search {{ \"project\": \"{slug}\", \"query\": \"...\" }}` — find notes by keyword.\n\
+- `memory.read {{ \"project\": \"{slug}\", \"path\": \"...\", \"mode\": \"outline\" }}` — headings first, then `mode:\"range\"`.\n\
+- `memory.context {{ \"project\": \"{slug}\", \"query\": \"...\" }}` — one ranked bundle (notes + tasks + related).\n\
+- `graph.query` / `graph.neighbors` / `graph.path` — relationships between notes and tasks.\n\
+- `tasks.list` / `tasks.create_many` — task state and batch creation.\n\
+\n\
+Avoid `graph.get` (the whole graph) and `memory.list` without `limit` unless you\n\
+really need everything.\n\
+{GUIDANCE_END}"
+    )
+}
+
+/// Escreve o bloco no `AGENTS.md`, preservando o conteúdo que já existia.
+fn write_guidance(root: &Path, slug: &str) -> AppResult<PathBuf> {
+    let path = root.join("AGENTS.md");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let cleaned = strip_guidance_block(&existing);
+    let block = guidance_block(slug);
+    let output = if cleaned.is_empty() {
+        format!("{block}\n")
+    } else {
+        format!("{cleaned}\n\n{block}\n")
+    };
+    std::fs::write(&path, output)?;
+    Ok(path)
+}
+
+/// Escreve (ou atualiza) o bloco de instruções do Beta Start no `AGENTS.md`
+/// da raiz do projeto, para que o assistente prefira o grafo à força bruta.
+#[tauri::command]
+pub fn install_ai_guidance(
+    state: State<AppState>,
+    project: Option<String>,
+) -> AppResult<String> {
+    let (workspace, linked) = config_scope(state.inner())?;
+    let project = project.filter(|value| !value.is_empty() && value != "all").or_else(|| {
+        state
+            .config
+            .lock()
+            .ok()
+            .and_then(|config| config.workspace.active_project.clone())
+    });
+
+    let (slug, root) = match project {
+        Some(slug) => {
+            let dir = memory::project_dir(&workspace, &linked, &slug)
+                .ok_or_else(|| AppError::NotFound(format!("projeto '{slug}' não encontrado")))?;
+            (slug, dir)
+        }
+        None => ("global".to_string(), workspace.clone()),
+    };
+
+    let path = write_guidance(&root, &slug)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> AppResult<Vec<ProjectInfo>> {
     let (workspace, linked) = config_scope(state.inner())?;
@@ -523,7 +613,7 @@ pub async fn get_graph(app: AppHandle, project: Option<String>) -> AppResult<Gra
     let db_path = paths::db_path(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open(&db_path)?;
-        crate::graph::build_graph(&conn, project.as_deref())
+        crate::graph::build_graph_cached(&conn, project.as_deref())
     })
     .await
     .map_err(|e| AppError::Platform(format!("falha ao montar o grafo: {e}")))?
@@ -699,4 +789,33 @@ pub fn delete_task(state: State<AppState>, id: String) -> AppResult<()> {
     }
     reindex_with_state(state.inner())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guidance_block_preserves_existing_content_and_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!(
+            "betastart-guidance-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("AGENTS.md"), "# Existing\n\nKeep me.\n").expect("agents");
+
+        let path = write_guidance(&dir, "meu-projeto").expect("first");
+        let raw = std::fs::read_to_string(&path).expect("read");
+        assert!(raw.contains("Keep me."));
+        assert_eq!(raw.matches(GUIDANCE_BEGIN).count(), 1);
+        assert!(raw.contains("meu-projeto"));
+
+        write_guidance(&dir, "meu-projeto").expect("second");
+        let raw = std::fs::read_to_string(&path).expect("read again");
+        assert_eq!(raw.matches(GUIDANCE_BEGIN).count(), 1);
+        assert_eq!(raw.matches("# Existing").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

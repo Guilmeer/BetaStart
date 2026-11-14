@@ -46,25 +46,40 @@ fn paths_info(app: &AppHandle, cfg: &Config) -> AppResult<PathsInfo> {
 }
 
 fn apply_patch(app: &AppHandle, state: &AppState, patch: serde_json::Value) -> AppResult<Config> {
-    let (updated, start_on_boot_changed) = {
+    let (updated, previous_start_on_boot) = {
         let current = state
             .config
             .lock()
             .map_err(|_| AppError::Config("config lock envenenado".into()))?;
         let previous = current.tray.start_on_boot;
-        let updated = current.merged(patch)?;
-        let changed = previous != updated.tray.start_on_boot;
-        (updated, changed)
+        (current.merged(patch)?, previous)
     };
-    if start_on_boot_changed {
-        platform::autostart::set(updated.tray.start_on_boot)?;
-    }
+
+    // Grava primeiro: um efeito colateral do SO não pode impedir o resto do
+    // patch (tema, idioma, MCP...) de ser salvo.
     let path = paths::config_path(app)?;
     updated.save(&path)?;
     *state
         .config
         .lock()
         .map_err(|_| AppError::Config("config lock envenenado".into()))? = updated.clone();
+
+    if previous_start_on_boot != updated.tray.start_on_boot {
+        if let Err(error) = platform::autostart::set(updated.tray.start_on_boot) {
+            // Reverte só esse campo para não deixar config e Windows divergentes.
+            let reverted = {
+                let mut config = state
+                    .config
+                    .lock()
+                    .map_err(|_| AppError::Config("config lock envenenado".into()))?;
+                config.tray.start_on_boot = previous_start_on_boot;
+                config.clone()
+            };
+            let _ = reverted.save(&path);
+            return Err(error);
+        }
+    }
+
     Ok(updated)
 }
 

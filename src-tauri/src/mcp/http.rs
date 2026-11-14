@@ -166,6 +166,9 @@ async fn mcp_post(
     let Some(token) = token_from(&headers, &HashMap::new()) else {
         return (StatusCode::UNAUTHORIZED, "missing token").into_response();
     };
+    if !authenticate(&state.app_data, &token) {
+        return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
+    }
 
     let app_data = state.app_data.clone();
     let response = tokio::task::spawn_blocking(move || handle_message(&app_data, &token, message))

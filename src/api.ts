@@ -109,6 +109,8 @@ export const api = {
 
   reindexMemory: () => invoke<number>("reindex_memory"),
   listProjects: () => invoke<ProjectInfo[]>("list_projects"),
+  installAiGuidance: (project: string | null) =>
+    invoke<string>("install_ai_guidance", { project }),
   createProject: (slug: string, title: string) =>
     invoke<ProjectInfo>("create_project", { slug, title }),
   linkProject: (root: string, title: string | null = null) =>

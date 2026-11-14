@@ -503,6 +503,24 @@ function App() {
     setSettings((current) => ({ ...current, ...patch }));
   }, []);
 
+  /// Tema e idioma têm efeito imediato: persiste na hora em vez de esperar
+  /// o botão Save (que fica no fim de uma tela longa).
+  const saveAppearance = useCallback(
+    async (patch: { theme?: string; language?: string }) => {
+      updateSettings(patch);
+      if (patch.language) setLanguage(patch.language);
+      const appearance: Record<string, string> = {};
+      if (patch.theme !== undefined) appearance.theme = patch.theme;
+      if (patch.language !== undefined) appearance.language = patch.language;
+      try {
+        await api.setConfig({ appearance });
+      } catch (error) {
+        setSettingsMsg(String(error));
+      }
+    },
+    [setLanguage, updateSettings],
+  );
+
   const addIndexDir = useCallback((value: string) => {
     const path = value.trim();
     if (!path) return;
@@ -540,8 +558,14 @@ function App() {
   const saveSettings = useCallback(async () => {
     setSettingsBusy(true);
     setSettingsMsg(null);
+    // Um atalho inválido não pode impedir o resto das configurações de salvar.
+    let launcherError: string | null = null;
     try {
-      await api.applyLauncherSettings(mode, hotkey.trim());
+      try {
+        await api.applyLauncherSettings(mode, hotkey.trim());
+      } catch (error) {
+        launcherError = String(error);
+      }
       const cfg = await api.setConfig({
         tray: {
           hideOnBlur: settings.hideOnBlur,
@@ -584,8 +608,12 @@ function App() {
         },
       });
       applyConfig(cfg);
-      setToast(t("Settings saved."));
-      setScreen("search");
+      if (launcherError) {
+        setSettingsMsg(launcherError);
+      } else {
+        setToast(t("Settings saved."));
+        setScreen("search");
+      }
     } catch (error) {
       setSettingsMsg(String(error));
     } finally {
@@ -873,13 +901,16 @@ function App() {
 
           <div className="settings-section">
             <h2>{t("Appearance")}</h2>
+            <span className="field-hint">
+              {t("Theme and language are saved immediately.")}
+            </span>
             <label className="field">
               <span className="field-label">{t("Theme")}</span>
               <select
                 className="text-input"
                 value={settings.theme}
                 onChange={(event) =>
-                  updateSettings({ theme: event.target.value })
+                  void saveAppearance({ theme: event.target.value })
                 }
               >
                 <option value="dark">{t("Dark")}</option>
@@ -893,7 +924,7 @@ function App() {
                 className="text-input"
                 value={settings.language}
                 onChange={(event) =>
-                  updateSettings({ language: event.target.value })
+                  void saveAppearance({ language: event.target.value })
                 }
               >
                 <option value="en">English</option>

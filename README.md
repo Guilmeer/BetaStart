@@ -150,8 +150,11 @@ Supported clients include Claude Desktop, Cursor, and any MCP-compatible tool.
 ### Tools
 
 Memory: `memory.list`, `memory.read`, `memory.write`, `memory.search`,
-`project.list`, `project.create`, `project.link`, `project.unlink`,
-`project.brief`, `graph.get`.
+`memory.context`, `project.list`, `project.create`, `project.link`,
+`project.unlink`, `project.brief`.
+
+Graph: `graph.query`, `graph.neighbors`, `graph.path`, `graph.explain`, plus
+`graph.get` for the full graph (expensive by design).
 
 Tasks: `tasks.list`, `tasks.create`, `tasks.create_many`, `tasks.update`,
 `tasks.delete`.
@@ -164,6 +167,24 @@ Other: `extensions.list`, `extensions.run`, `search.query`, `clipboard.list`,
 
 MCP also exposes **resources** (notes and tasks as Markdown), ready-made
 **prompts**, and an audit of recent calls in the 🔌 screen.
+
+### Token-efficient by default
+
+- Every response is compact JSON; tool descriptions steer the assistant to the
+  cheapest path.
+- `project.brief` summarizes a project in a few hundred tokens.
+- `memory.read` supports `mode: "outline"` and `mode: "range"`, and caps `full`
+  reads.
+- `graph.query` / `graph.neighbors` return a scoped subgraph with a token
+  budget, instead of the whole graph.
+- Paths come back relative to the project.
+- The server sends read/write **instructions** on `initialize`.
+
+### AI guidance
+
+**MCP → AI guidance** writes (or updates) a marked block in the `AGENTS.md` of
+the selected project, teaching the assistant to query Beta Start instead of
+re-reading files. Existing content is preserved.
 
 ## Settings
 

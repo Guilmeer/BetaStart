@@ -6,6 +6,7 @@ import type {
   McpClient,
   McpClientCreated,
   McpStatus,
+  ProjectInfo,
 } from "./types";
 
 const SCOPES = [
@@ -38,19 +39,25 @@ export function Mcp({ onBack }: { onBack: () => void }) {
   const [created, setCreated] = useState<McpClientCreated | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [guidanceProject, setGuidanceProject] = useState("");
+  const [guidancePath, setGuidancePath] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [serverStatus, list, exe, paths, recent] = await Promise.all([
-        api.mcpStatus(),
-        api.mcpListClients(),
-        api.mcpExePath(),
-        api.getPaths(),
-        api.mcpAudit(40),
-      ]);
+      const [serverStatus, list, exe, paths, recent, projectList] =
+        await Promise.all([
+          api.mcpStatus(),
+          api.mcpListClients(),
+          api.mcpExePath(),
+          api.getPaths(),
+          api.mcpAudit(40),
+          api.listProjects(),
+        ]);
       setStatus(serverStatus);
       setClients(list);
       setAudit(recent);
+      setProjects(projectList);
       setExePath(exe);
       const separatorIndex = Math.max(
         paths.config.lastIndexOf("\\"),
@@ -124,6 +131,20 @@ export function Mcp({ onBack }: { onBack: () => void }) {
     }
   };
 
+  const installGuidance = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const path = await api.installAiGuidance(guidanceProject || null);
+      setGuidancePath(path);
+      setMessage(t("AI guidance written to AGENTS.md."));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const snippet = created
     ? JSON.stringify(
         {
@@ -194,6 +215,37 @@ export function Mcp({ onBack }: { onBack: () => void }) {
         <div className="field-hint">
           {t("If a connection drops, the log shows whether the process exited on its own (EOF) or was terminated by the client. Set BETASTART_MCP_TRACE=1 to log every method.")}
         </div>
+      </div>
+
+      <div className="ext-card">
+        <div className="ext-card-row">
+          <strong>{t("AI guidance")}</strong>
+        </div>
+        <div className="field-hint">
+          {t("Writes an AGENTS.md block that teaches your assistant to query this memory instead of re-reading files.")}
+        </div>
+        <div className="inline">
+          <select
+            className="text-input"
+            value={guidanceProject}
+            onChange={(event) => setGuidanceProject(event.target.value)}
+          >
+            <option value="">{t("Active project")}</option>
+            {projects.map((project) => (
+              <option key={project.slug} value={project.slug}>
+                {project.title}
+              </option>
+            ))}
+          </select>
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => void installGuidance()}
+          >
+            {t("Install guidance")}
+          </button>
+        </div>
+        {guidancePath && <code className="token-box">{guidancePath}</code>}
       </div>
 
       <h2>{t("Create client / token")}</h2>

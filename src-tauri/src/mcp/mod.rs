@@ -80,7 +80,8 @@ pub fn handle(ctx: &mut McpContext, client: &McpClient, message: Value) -> Optio
             "serverInfo": {
                 "name": "betastart",
                 "version": env!("CARGO_PKG_VERSION")
-            }
+            },
+            "instructions": INSTRUCTIONS
         })),
         "notifications/initialized" | "notifications/cancelled" => None,
         "ping" => Some(json!({})),
@@ -124,13 +125,13 @@ pub fn handle(ctx: &mut McpContext, client: &McpClient, message: Value) -> Optio
             );
             Some(result)
         }
-        "resources/list" => Some(list_resources(ctx)),
+        "resources/list" => Some(list_resources(ctx, client)),
         "resources/read" => {
             let uri = params
                 .get("uri")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
-            Some(read_resource(ctx, uri))
+            Some(read_resource(ctx, client, uri))
         }
         "prompts/list" => Some(list_prompts()),
         "prompts/get" => {
@@ -178,7 +179,36 @@ fn hex_decode(value: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn list_resources(ctx: &McpContext) -> Value {
+/// Protocolo de leitura entregue ao cliente no `initialize`.
+///
+/// É a maior alavanca de economia: sem isso o modelo não sabe que
+/// `project.brief`/`memory.context` existem e encadeia leituras amplas.
+const INSTRUCTIONS: &str = "\
+Beta Start is the user's local memory: Markdown notes, tasks, window management, search and clipboard.
+
+READ PROTOCOL (keeps token cost low):
+1. For a project you have not seen in this session, call `project.brief` first. Do not chain project.list + memory.list + tasks.list.
+2. To locate a topic, call `memory.search`. Read only the returned files.
+3. Before reading a file, call `memory.read` with mode:\"outline\"; then read one section with mode:\"range\" or the whole file with mode:\"full\".
+4. For a question that spans notes and tasks, call `memory.context` once instead of several calls.
+5. For relationships use `graph.query`, `graph.neighbors`, `graph.path` or `graph.explain`.
+6. `graph.get` returns the ENTIRE graph (usually tens of thousands of tokens). Use it only when the user explicitly asks for the whole graph.
+7. `memory.list` is paginated (default 200). Prefer `project.brief` for an overview.
+
+WRITE PROTOCOL:
+- Create tasks in batch with `tasks.create_many`.
+- Prefer `tasks.update` for task fields instead of rewriting whole files.
+- Paths returned by `project.brief`/`memory.list` are relative to the project; pass `project` together with them.
+";
+
+fn has_scope(client: &McpClient, scope: &str) -> bool {
+    client.scopes.iter().any(|item| item == scope)
+}
+
+fn list_resources(ctx: &McpContext, client: &McpClient) -> Value {
+    if !has_scope(client, "memory") {
+        return json!({ "resources": [] });
+    }
     let files = crate::db::memory::list_files(&ctx.db, None).unwrap_or_default();
     let resources: Vec<Value> = files
         .into_iter()
@@ -194,7 +224,16 @@ fn list_resources(ctx: &McpContext) -> Value {
     json!({ "resources": resources })
 }
 
-fn read_resource(ctx: &McpContext, uri: &str) -> Value {
+fn read_resource(ctx: &McpContext, client: &McpClient, uri: &str) -> Value {
+    if !has_scope(client, "memory") {
+        return json!({
+            "contents": [{
+                "uri": uri,
+                "mimeType": "text/plain",
+                "text": "permission denied: scope 'memory' not granted"
+            }]
+        });
+    }
     let Some(encoded) = uri.strip_prefix("betastart://memory/") else {
         return json!({ "contents": [] });
     };
@@ -577,6 +616,11 @@ mod tests {
         )
         .expect("initialize response");
         assert_eq!(init["result"]["serverInfo"]["name"], "betastart");
+        // O protocolo de leitura precisa chegar ao cliente.
+        assert!(init["result"]["instructions"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("project.brief"));
 
         let list = handle(
             &mut ctx,
@@ -587,6 +631,18 @@ mod tests {
         let tools = list["result"]["tools"].as_array().expect("tools array");
         assert!(tools.len() >= 15);
         assert!(tools.iter().any(|tool| tool["name"] == "memory.list"));
+        for expected in [
+            "memory.context",
+            "graph.query",
+            "graph.neighbors",
+            "graph.path",
+            "graph.explain",
+        ] {
+            assert!(
+                tools.iter().any(|tool| tool["name"] == expected),
+                "tool ausente: {expected}"
+            );
+        }
 
         let call = handle(
             &mut ctx,
@@ -929,6 +985,102 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("Memoria"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memory_list_is_paginated_and_reads_have_modes() {
+        let (root, mut ctx) = test_context();
+        let folder = root.join("workspace/global/inbox");
+        std::fs::create_dir_all(&folder).expect("inbox");
+        std::fs::write(
+            folder.join("nota.md"),
+            "# Titulo\n\n## Secao\n\ncorpo da nota\n",
+        )
+        .expect("note");
+        ctx.reindex().expect("reindex");
+
+        let client = test_client(vec!["memory"]);
+
+        let list = handle(
+            &mut ctx,
+            &client,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "memory.list",
+                    "arguments": { "project": "global", "limit": 1 }
+                }
+            }),
+        )
+        .expect("list response");
+        let body = list["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        let parsed: Value = serde_json::from_str(body).expect("list json");
+        assert_eq!(parsed["returned"], 1);
+        assert!(parsed["total"].as_u64().unwrap_or(0) >= 1);
+        let path = parsed["files"][0]["path"].as_str().unwrap_or_default();
+        assert!(path.ends_with("nota.md"));
+        assert!(!path.contains('\\'), "caminho deve ser relativo: {path}");
+
+        let outline = handle(
+            &mut ctx,
+            &client,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "memory.read",
+                    "arguments": { "project": "global", "path": "inbox/nota.md", "mode": "outline" }
+                }
+            }),
+        )
+        .expect("outline response");
+        let outline_text = outline["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        let outline_json: Value = serde_json::from_str(outline_text).expect("outline json");
+        assert_eq!(outline_json["headings"][1]["level"], 2);
+
+        let range = handle(
+            &mut ctx,
+            &client,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "memory.read",
+                    "arguments": {
+                        "project": "global",
+                        "path": "inbox/nota.md",
+                        "mode": "range",
+                        "start": 5,
+                        "end": 5
+                    }
+                }
+            }),
+        )
+        .expect("range response");
+        assert!(range["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("corpo da nota"));
+
+        // Sem escopo `memory`, resources ficam vazios (antes vazava tudo).
+        let anonymous = test_client(vec![]);
+        let resources = handle(
+            &mut ctx,
+            &anonymous,
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": {} }),
+        )
+        .expect("resources response");
+        assert_eq!(resources["result"]["resources"].as_array().unwrap().len(), 0);
 
         let _ = std::fs::remove_dir_all(&root);
     }

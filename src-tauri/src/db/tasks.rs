@@ -3,6 +3,86 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::error::AppResult;
 use crate::models::{Task, TaskRow};
 
+/// Remove as tasks cujos arquivos sumiram ou mudaram.
+pub fn delete_paths(conn: &Connection, paths: &[String]) -> AppResult<usize> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare("DELETE FROM tasks_index WHERE file_path = ?1")?;
+        for path in paths {
+            stmt.execute(params![path])?;
+        }
+    }
+    tx.commit()?;
+    Ok(paths.len())
+}
+
+/// Insere as tasks novas/alteradas e seus lembretes.
+pub fn insert_rows(conn: &Connection, rows: &[TaskRow]) -> AppResult<usize> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT OR REPLACE INTO tasks_index
+               (id, file_path, title, status, priority, due, remind, tags, project,
+                parent_id, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?;
+        for (index, row) in rows.iter().enumerate() {
+            let tags = serde_json::to_string(&row.tags)?;
+            stmt.execute(params![
+                row.id,
+                row.file_path,
+                row.title,
+                row.status,
+                row.priority,
+                row.due,
+                row.remind,
+                tags,
+                row.project,
+                row.parent_id,
+                index as i64,
+                row.updated_at
+            ])?;
+        }
+    }
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO reminders (task_id, due_at, enabled, notified_at)
+             VALUES (?1, ?2, 1, NULL)
+             ON CONFLICT(task_id) DO UPDATE SET
+               due_at = excluded.due_at,
+               enabled = 1,
+               notified_at = CASE
+                 WHEN reminders.due_at <> excluded.due_at THEN NULL
+                 ELSE reminders.notified_at
+               END",
+        )?;
+        for row in rows {
+            if let Some(remind) = row.remind {
+                stmt.execute(params![row.id, remind])?;
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(rows.len())
+}
+
+/// Remove lembretes órfãos ou de tasks que não têm mais `remind`.
+pub fn prune_reminders(conn: &Connection) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM reminders
+          WHERE task_id NOT IN (SELECT id FROM tasks_index WHERE remind IS NOT NULL)",
+        [],
+    )?;
+    Ok(())
+}
+
+#[allow(dead_code)] // usado nos testes e como caminho de reindexação total
 pub fn replace_all(conn: &Connection, rows: &[TaskRow]) -> AppResult<usize> {
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM tasks_index", [])?;

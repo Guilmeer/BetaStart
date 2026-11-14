@@ -42,4 +42,10 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
+impl From<String> for AppError {
+    fn from(value: String) -> Self {
+        AppError::Platform(value)
+    }
+}
+
 pub type AppResult<T> = Result<T, AppError>;

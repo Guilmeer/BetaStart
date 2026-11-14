@@ -242,6 +242,7 @@ pub fn run() {
             commands::apply_window_rules,
             memory_api::reindex_memory,
             memory_api::list_projects,
+            memory_api::install_ai_guidance,
             memory_api::create_project,
             memory_api::link_project,
             memory_api::unlink_project,

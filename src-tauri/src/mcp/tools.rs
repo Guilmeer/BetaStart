@@ -1,4 +1,9 @@
 //! Definições e implementação das tools MCP.
+//!
+//! Regra de ouro: toda resposta é JSON compacto (sem indentação) e todo
+//! retorno tem teto de tamanho. As tools de leitura ampla (`memory.list`,
+//! `graph.get`) avisam o custo na descrição e apontam para a alternativa
+//! escopada (`project.brief`, `graph.query`, `memory.context`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,7 +14,8 @@ use crate::db;
 use crate::mcp::McpContext;
 use crate::memory::{self, Frontmatter};
 use crate::models::{
-    McpClient, MemoryFile, NoteDetail, ProjectInfo, RunResult, Task, TaskPatch, TaskSummary,
+    GraphView, McpClient, MemoryFile, NoteDetail, ProjectInfo, RunResult, Task, TaskPatch,
+    TaskSummary,
 };
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
@@ -28,8 +34,9 @@ fn require_scope(client: &McpClient, scope: &str) -> Result<(), String> {
     }
 }
 
+/// JSON compacto: indentação custava ~20% de tokens em respostas grandes.
 fn text_result<T: serde::Serialize>(value: &T) -> Result<String, String> {
-    serde_json::to_string_pretty(value).map_err(|error| error.to_string())
+    serde_json::to_string(value).map_err(|error| error.to_string())
 }
 
 fn arg_str(args: &Value, key: &str) -> Option<String> {
@@ -41,6 +48,12 @@ fn arg_str(args: &Value, key: &str) -> Option<String> {
 fn arg_vec(args: &Value, key: &str) -> Option<Vec<String>> {
     args.get(key)
         .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+}
+
+fn arg_bool(args: &Value, key: &str, default: bool) -> bool {
+    args.get(key)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(default)
 }
 
 fn arg_present(args: &Value, key: &str) -> bool {
@@ -59,24 +72,38 @@ fn arg_u64(args: &Value, key: &str) -> Option<u64> {
     args.get(key).and_then(|value| value.as_u64())
 }
 
+/// Projeto pedido, com `"all"`/vazio tratados como "todos".
+fn scoped_project(args: &Value) -> Option<String> {
+    arg_str(args, "project").filter(|value| !value.is_empty() && value != "all")
+}
+
 pub fn definitions() -> Vec<Value> {
     vec![
         tool(
             "memory.list",
-            "List notes, tasks and projects in the workspace and linked project folders.",
+            "List memory files (notes, tasks, project manifests) with relative paths. Paginated: default limit 200. Prefer project.brief for an overview; use this only when you need the file list.",
             json!({
                 "type": "object",
-                "properties": { "project": { "type": "string", "description": "Project slug or 'global'" } }
+                "properties": {
+                    "project": { "type": "string", "description": "Project slug or 'global'" },
+                    "limit": { "type": "number", "description": "Default 200 (max 500)" },
+                    "offset": { "type": "number", "description": "Default 0" },
+                    "compact": { "type": "boolean", "description": "Default true (path/kind/title only)" }
+                }
             }),
         ),
         tool(
             "memory.read",
-            "Read a Markdown memory file (raw content) from the workspace or a linked project. Accepts an absolute path, or a path relative to `project` (as returned by project.brief).",
+            "Read a Markdown memory file from the workspace or a linked project. `mode:\"outline\"` returns headings + line numbers (cheap; do this before a full read), `mode:\"range\"` reads lines start..end, `mode:\"full\"` returns the raw file (capped at maxBytes).",
             json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "project": { "type": "string", "description": "Required when `path` is relative" }
+                    "project": { "type": "string", "description": "Required when `path` is relative" },
+                    "mode": { "type": "string", "enum": ["full", "outline", "range"] },
+                    "start": { "type": "number", "description": "range: first line (1-based)" },
+                    "end": { "type": "number", "description": "range: last line" },
+                    "maxBytes": { "type": "number", "description": "full: cap, default 24000" }
                 },
                 "required": ["path"]
             }),
@@ -96,14 +123,28 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "memory.search",
-            "Search memory by keyword and optional tags.",
+            "Search memory by keyword and optional tags. Returns path, kind, title and a short snippet; read only the files you actually need.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
                     "project": { "type": "string" },
                     "tags": { "type": "array", "items": { "type": "string" } },
-                    "limit": { "type": "number" }
+                    "limit": { "type": "number", "description": "Default 20" }
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool(
+            "memory.context",
+            "One ranked bundle for a question: matching notes with snippets, open tasks, and related notes. Cheaper than memory.search + project.brief + graph.query in sequence.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "project": { "type": "string", "description": "Defaults to the active project" },
+                    "limit": { "type": "number", "description": "Notes to return, default 8" },
+                    "budget": { "type": "number", "description": "Approximate token cap, default 1500" }
                 },
                 "required": ["query"]
             }),
@@ -154,7 +195,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "project.brief",
-            "Compact digest of one project: metadata, note list (relative paths), task counts by status and the first open tasks. Costs ~300-600 tokens instead of project.list + memory.list + tasks.list.",
+            "START HERE for a project. Compact digest: metadata, notes ranked by importance (relative paths), task counts by status and the first open tasks. Costs ~300-600 tokens instead of project.list + memory.list + tasks.list.",
             json!({
                 "type": "object",
                 "properties": {
@@ -164,10 +205,64 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "graph.get",
-            "Get the knowledge graph (nodes and edges).",
+            "Returns the ENTIRE graph (every node and edge). Expensive: on a few hundred notes it costs tens of thousands of tokens. Use graph.query, graph.neighbors, graph.path or graph.explain for questions; use this only when the user explicitly asks for the whole graph.",
             json!({
                 "type": "object",
                 "properties": { "project": { "type": "string" } }
+            }),
+        ),
+        tool(
+            "graph.query",
+            "Find nodes by term and return the subgraph around them, capped by a token budget. This is the default way to explore relationships between notes, tasks, tags and projects.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "project": { "type": "string" },
+                    "depth": { "type": "number", "description": "Hops from the seeds, 1-3 (default 2)" },
+                    "budget": { "type": "number", "description": "Approximate token cap, default 2000" }
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool(
+            "graph.neighbors",
+            "Subgraph around one node (by id, label, path or file name). Cheaper than graph.query when you already know the node.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "node": { "type": "string" },
+                    "project": { "type": "string" },
+                    "hops": { "type": "number", "description": "Default 1 (max 3)" },
+                    "budget": { "type": "number", "description": "Approximate token cap, default 1500" }
+                },
+                "required": ["node"]
+            }),
+        ),
+        tool(
+            "graph.path",
+            "Shortest path between two nodes, hop by hop, with the edge kind of each hop (link, parent, tag, project).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string" },
+                    "to": { "type": "string" },
+                    "project": { "type": "string" }
+                },
+                "required": ["from", "to"]
+            }),
+        ),
+        tool(
+            "graph.explain",
+            "Explain one node: degree and every direct connection with direction and edge kind.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "node": { "type": "string" },
+                    "project": { "type": "string" },
+                    "limit": { "type": "number", "description": "Max connections, default 40" }
+                },
+                "required": ["node"]
             }),
         ),
         tool(
@@ -376,6 +471,10 @@ pub fn call(
             require_scope(client, "memory")?;
             memory_search(ctx, &args)
         }
+        "memory.context" => {
+            require_scope(client, "memory")?;
+            memory_context(ctx, &args)
+        }
         "project.list" => {
             require_scope(client, "memory")?;
             project_list(ctx)
@@ -399,6 +498,22 @@ pub fn call(
         "graph.get" => {
             require_scope(client, "memory")?;
             graph_get(ctx, &args)
+        }
+        "graph.query" => {
+            require_scope(client, "memory")?;
+            graph_query(ctx, &args)
+        }
+        "graph.neighbors" => {
+            require_scope(client, "memory")?;
+            graph_neighbors(ctx, &args)
+        }
+        "graph.path" => {
+            require_scope(client, "memory")?;
+            graph_path(ctx, &args)
+        }
+        "graph.explain" => {
+            require_scope(client, "memory")?;
+            graph_explain(ctx, &args)
         }
         "tasks.list" => {
             require_scope(client, "tasks")?;
@@ -465,9 +580,52 @@ pub fn call(
 }
 
 fn memory_list(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let project = arg_str(args, "project");
+    let project = scoped_project(args);
+    let limit = arg_i64(args, "limit").unwrap_or(200).clamp(1, 500) as usize;
+    let offset = arg_i64(args, "offset").unwrap_or(0).max(0) as usize;
+    let compact = arg_bool(args, "compact", true);
+
     let files = db::memory::list_files(&ctx.db, project.as_deref()).map_err(|e| e.to_string())?;
-    text_result(&files)
+    let total = files.len();
+
+    let items: Vec<Value> = files
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|file| {
+            let path = relative_for(ctx, &file.project, &file.path);
+            if compact {
+                let mut value = json!({
+                    "path": path,
+                    "kind": file.kind,
+                    "title": file.title,
+                });
+                if project.is_none() {
+                    value["project"] = json!(file.project);
+                }
+                if !file.tags.is_empty() {
+                    value["tags"] = json!(file.tags);
+                }
+                value
+            } else {
+                json!({
+                    "path": path,
+                    "name": file.name,
+                    "kind": file.kind,
+                    "title": file.title,
+                    "project": file.project,
+                    "tags": file.tags,
+                })
+            }
+        })
+        .collect();
+
+    text_result(&json!({
+        "total": total,
+        "offset": offset,
+        "returned": items.len(),
+        "files": items,
+    }))
 }
 
 /// Resolve `path` absoluto ou relativo ao projeto informado (ou projeto ativo).
@@ -478,8 +636,7 @@ fn resolve_memory_path(ctx: &McpContext, args: &Value) -> Result<PathBuf, String
         return Ok(path);
     }
 
-    let slug = arg_str(args, "project")
-        .filter(|value| !value.is_empty() && value != "all")
+    let slug = scoped_project(args)
         .or_else(|| ctx.config.workspace.active_project.clone())
         .ok_or_else(|| {
             "relative path requires 'project' (or an active project); use project.list".to_string()
@@ -489,11 +646,100 @@ fn resolve_memory_path(ctx: &McpContext, args: &Value) -> Result<PathBuf, String
     Ok(dir.join(path))
 }
 
+/// Caminho relativo à raiz do projeto (economiza o caminho absoluto inteiro).
+fn relative_for(ctx: &McpContext, project: &str, path: &str) -> String {
+    match memory::project_dir(&ctx.workspace, &ctx.linked, project) {
+        Some(root) => relative_path(Some(&root.to_string_lossy()), path),
+        None => relative_path(None, path),
+    }
+}
+
 fn memory_read(ctx: &McpContext, args: &Value) -> Result<String, String> {
     let path_buf = resolve_memory_path(ctx, args)?;
     ensure_text_path(&path_buf)?;
     memory::ensure_allowed(&ctx.workspace, &ctx.linked, &path_buf).map_err(|e| e.to_string())?;
-    std::fs::read_to_string(&path_buf).map_err(|e| e.to_string())
+
+    let raw = std::fs::read_to_string(&path_buf).map_err(|e| e.to_string())?;
+    let mode = arg_str(args, "mode")
+        .unwrap_or_else(|| "full".into())
+        .to_lowercase();
+    let label = arg_str(args, "path").unwrap_or_default();
+
+    match mode.as_str() {
+        "outline" => {
+            let lines: Vec<&str> = raw.lines().collect();
+            let mut headings = Vec::new();
+            for (index, line) in lines.iter().enumerate() {
+                let trimmed = line.trim_start();
+                if !trimmed.starts_with('#') {
+                    continue;
+                }
+                let level = trimmed.chars().take_while(|value| *value == '#').count();
+                if level > 6 {
+                    continue;
+                }
+                let text = trimmed[level..].trim();
+                if text.is_empty() {
+                    continue;
+                }
+                headings.push(json!({ "line": index + 1, "level": level, "text": text }));
+            }
+            let preview = raw
+                .split("\n\n")
+                .find(|block| !block.trim().is_empty())
+                .map(|block| block.chars().take(240).collect::<String>())
+                .unwrap_or_default();
+            Ok(text_result(&json!({
+                "path": label,
+                "mode": "outline",
+                "lines": lines.len(),
+                "chars": raw.chars().count(),
+                "headings": headings,
+                "preview": if headings.is_empty() { preview } else { String::new() },
+                "hint": "use mode:\"range\" with a heading line to read one section",
+            }))?)
+        }
+        "range" => {
+            let lines: Vec<&str> = raw.lines().collect();
+            let total = lines.len();
+            let start = arg_i64(args, "start").unwrap_or(1).max(1) as usize;
+            let end = arg_i64(args, "end")
+                .unwrap_or((start + 200) as i64)
+                .max(start as i64) as usize;
+            let end = end.min(total.max(1));
+            if start > total {
+                return Err(format!("start ({start}) is past the end ({total} lines)"));
+            }
+            let text = lines[start - 1..end].join("\n");
+            Ok(text_result(&json!({
+                "path": label,
+                "mode": "range",
+                "start": start,
+                "end": end,
+                "totalLines": total,
+                "text": text,
+                "hasMore": end < total,
+            }))?)
+        }
+        _ => {
+            let max_bytes = arg_i64(args, "maxBytes")
+                .unwrap_or(24_000)
+                .clamp(500, 200_000) as usize;
+            if raw.len() <= max_bytes {
+                return Ok(raw);
+            }
+            let mut end = max_bytes;
+            while end > 0 && !raw.is_char_boundary(end) {
+                end -= 1;
+            }
+            Ok(format!(
+                "{}\n\n[… truncated at {} of {} bytes; use mode:\"outline\" or mode:\"range\" for the rest]",
+                &raw[..end],
+                end,
+                raw.len()
+            ))
+        }
+    }
 }
 
 fn memory_write(ctx: &McpContext, args: &Value) -> Result<String, String> {
@@ -538,18 +784,134 @@ fn ensure_text_path(path: &Path) -> Result<(), String> {
 
 fn memory_search(ctx: &McpContext, args: &Value) -> Result<String, String> {
     let query = arg_str(args, "query").unwrap_or_default();
-    let project = arg_str(args, "project");
+    let project = scoped_project(args);
     let tags = arg_vec(args, "tags").unwrap_or_default();
     let limit = arg_i64(args, "limit").unwrap_or(20).max(1) as usize;
     let hits = db::memory::search(&ctx.db, project.as_deref(), &query, &tags, limit)
         .map_err(|e| e.to_string())?;
-    text_result(&hits)
+
+    let items: Vec<Value> = hits
+        .iter()
+        .map(|hit| {
+            json!({
+                "path": relative_for(ctx, &hit.project, &hit.file_path),
+                "kind": hit.kind,
+                "title": hit.title,
+                "project": hit.project,
+                "tags": hit.tags,
+                "snippet": hit.snippet,
+            })
+        })
+        .collect();
+    text_result(&json!({ "total": items.len(), "hits": items }))
+}
+
+/// Pacote ranqueado único para uma pergunta (notas + tasks + vizinhança).
+fn memory_context(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let query = arg_str(args, "query").unwrap_or_default();
+    let project = scoped_project(args).or_else(|| ctx.config.workspace.active_project.clone());
+    let limit = arg_i64(args, "limit").unwrap_or(8).clamp(1, 30) as usize;
+    let budget = arg_i64(args, "budget").unwrap_or(1500).clamp(400, 8000) as usize;
+    let limit_chars = budget * 4;
+
+    let project_meta = match project.as_deref() {
+        Some(slug) => memory::list_projects(&ctx.workspace, &ctx.linked)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|item| item.slug == slug)
+            .map(|item| json!({ "slug": item.slug, "title": item.title, "description": item.description })),
+        None => None,
+    };
+
+    let hits = if query.trim().is_empty() {
+        Vec::new()
+    } else {
+        db::memory::search(&ctx.db, project.as_deref(), &query, &[], limit)
+            .map_err(|e| e.to_string())?
+    };
+
+    let mut used = 0usize;
+    let mut truncated = false;
+    let mut notes: Vec<Value> = Vec::new();
+    for hit in &hits {
+        let snippet: String = hit.snippet.chars().take(160).collect();
+        let value = json!({
+            "path": relative_for(ctx, &hit.project, &hit.file_path),
+            "kind": hit.kind,
+            "title": hit.title,
+            "snippet": snippet,
+        });
+        used += value.to_string().len();
+        if used > limit_chars / 2 {
+            truncated = true;
+            break;
+        }
+        notes.push(value);
+    }
+
+    let mut tasks: Vec<Value> = Vec::new();
+    if let Ok(list) = db::tasks::list(&ctx.db, project.as_deref(), None, Some(&query)) {
+        for task in list.iter().filter(|task| task.status != "done").take(8) {
+            let summary = TaskSummary::from_task(task);
+            used += 60;
+            if used > limit_chars {
+                truncated = true;
+                break;
+            }
+            tasks.push(serde_json::to_value(summary).unwrap_or(Value::Null));
+        }
+    }
+
+    // Vizinhança da primeira nota: dá o "onde isso se conecta" sem despejar o grafo.
+    let mut related: Vec<Value> = Vec::new();
+    if let Some(first) = hits.first() {
+        if let Ok(explain) =
+            crate::graph::explain(&ctx.db, project.as_deref(), &first.file_path, 12)
+        {
+            for connection in explain.connections {
+                used += 50;
+                if used > limit_chars {
+                    truncated = true;
+                    break;
+                }
+                related.push(json!({
+                    "label": connection.label,
+                    "kind": connection.node_kind,
+                    "relation": connection.kind,
+                    "direction": connection.direction,
+                    "path": connection.path.map(|path| {
+                        relative_for(ctx, project.as_deref().unwrap_or("global"), &path)
+                    }),
+                }));
+            }
+        }
+    }
+
+    text_result(&json!({
+        "project": project_meta,
+        "query": query,
+        "notes": notes,
+        "tasks": tasks,
+        "related": related,
+        "truncated": truncated,
+    }))
 }
 
 fn project_list(ctx: &McpContext) -> Result<String, String> {
     let projects =
         memory::list_projects(&ctx.workspace, &ctx.linked).map_err(|e| e.to_string())?;
-    text_result(&projects)
+    let items: Vec<Value> = projects
+        .iter()
+        .map(|project| {
+            json!({
+                "slug": project.slug,
+                "title": project.title,
+                "mode": project.mode,
+                "available": project.available,
+            })
+        })
+        .collect();
+    text_result(&json!({ "projects": items }))
 }
 
 fn project_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
@@ -624,7 +986,7 @@ fn project_link(ctx: &mut McpContext, args: &Value) -> Result<String, String> {
     text_result(&json!({
         "project": project,
         "indexedFiles": indexed_files,
-        "hint": "The Beta Start window refreshes automatically within ~2 seconds."
+        "hint": "The Beta Start window refreshes automatically within ~2 seconds.",
     }))
 }
 
@@ -645,18 +1007,19 @@ fn relative_path(root: Option<&str>, path: &str) -> String {
             return relative.to_string_lossy().replace('\\', "/");
         }
     }
-    Path::new(path)
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string())
+    // Sem raiz conhecida, devolve o caminho inteiro: um nome de arquivo solto
+    // aqui quebraria o `memory.read` (o caminho relativo precisa de projeto).
+    path.replace('\\', "/")
 }
 
 /// Digest compacto de um projeto (~300-600 tokens): metadados, arquivos de
 /// memória com caminho relativo e resumo de tasks. Evita encadear
 /// `project.list` + `memory.list` + `tasks.list`.
+///
+/// As notas são rankeadas por grau aproximado (links + tags) e recência, não
+/// pela ordem do índice: o que está truncado é o menos conectado.
 fn project_brief(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let requested = arg_str(args, "project")
-        .filter(|value| !value.is_empty() && value != "all")
+    let requested = scoped_project(args)
         .or_else(|| ctx.config.workspace.active_project.clone())
         .ok_or_else(|| {
             "project is required (no active project set); use project.list".to_string()
@@ -668,23 +1031,26 @@ fn project_brief(ctx: &McpContext, args: &Value) -> Result<String, String> {
         .find(|item| item.slug == requested)
         .ok_or_else(|| format!("project '{requested}' not found"))?;
 
-    let files =
-        db::memory::list_files(&ctx.db, Some(&project.slug)).map_err(|e| e.to_string())?;
+    let rows =
+        db::memory::brief_rows(&ctx.db, Some(&project.slug)).map_err(|e| e.to_string())?;
     let root = project.root_path.as_deref();
 
-    let mut notes: Vec<Value> = files
+    let mut notes: Vec<Value> = rows
         .iter()
-        .filter(|file| file.kind != "task")
-        .map(|file| {
+        .filter(|row| row.kind != "task")
+        .map(|row| {
             json!({
-                "name": file.name,
-                "title": file.title,
-                "kind": file.kind,
-                "path": relative_path(root, &file.path),
+                "name": Path::new(&row.file_path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                "title": row.title,
+                "kind": row.kind,
+                "path": relative_path(root, &row.file_path),
             })
         })
         .collect();
-    // O manifesto do projeto vem primeiro; depois a ordem do índice.
+    // O manifesto do projeto vem primeiro; o resto já está por importância.
     notes.sort_by_key(|note| note["kind"].as_str() != Some("project"));
     let notes_total = notes.len();
     notes.truncate(25);
@@ -712,12 +1078,11 @@ fn project_brief(ctx: &McpContext, args: &Value) -> Result<String, String> {
             "slug": project.slug,
             "title": project.title,
             "description": project.description,
-            "rootPath": project.root_path,
             "mode": project.mode,
             "available": project.available,
         },
         "files": {
-            "total": files.len(),
+            "total": rows.len(),
             "notes": notes_total,
         },
         "notes": notes,
@@ -731,21 +1096,186 @@ fn project_brief(ctx: &McpContext, args: &Value) -> Result<String, String> {
     }))
 }
 
+/// Converte um subgrafo em JSON com caminhos relativos (menos tokens).
+fn graph_view_json(ctx: &McpContext, view: &GraphView, scoped: bool) -> Value {
+    let nodes: Vec<Value> = view
+        .nodes
+        .iter()
+        .map(|node| {
+            let path = node.path.as_deref().map(|path| match node.project.as_deref() {
+                Some(slug) => relative_for(ctx, slug, path),
+                None => path.to_string(),
+            });
+            let mut value = json!({
+                "id": node.id,
+                "kind": node.kind,
+                "label": node.label,
+                "path": path,
+            });
+            if !scoped {
+                value["project"] = json!(node.project);
+            }
+            value
+        })
+        .collect();
+
+    json!({
+        "nodes": nodes,
+        "edges": view.edges,
+        "seeds": view.seeds,
+        "truncated": view.truncated,
+        "totalNodes": view.total_nodes,
+        "totalEdges": view.total_edges,
+    })
+}
+
 fn graph_get(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let project = arg_str(args, "project");
-    let graph =
-        crate::graph::build_graph(&ctx.db, project.as_deref()).map_err(|e| e.to_string())?;
-    text_result(&graph)
+    let project = scoped_project(args);
+    let graph = crate::graph::build_graph_cached(&ctx.db, project.as_deref())
+        .map_err(|e| e.to_string())?;
+
+    let nodes: Vec<Value> = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            let path = node.path.as_deref().map(|path| match node.project.as_deref() {
+                Some(slug) => relative_for(ctx, slug, path),
+                None => path.to_string(),
+            });
+            let mut value = json!({
+                "id": node.id,
+                "kind": node.kind,
+                "label": node.label,
+                "path": path,
+            });
+            if project.is_none() {
+                value["project"] = json!(node.project);
+            }
+            value
+        })
+        .collect();
+
+    text_result(&json!({
+        "nodes": nodes,
+        "edges": graph.edges,
+        "totalNodes": graph.nodes.len(),
+        "totalEdges": graph.edges.len(),
+        "hint": "graph.get is the full graph; prefer graph.query/neighbors/path for questions",
+    }))
+}
+
+fn graph_query(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let query = arg_str(args, "query").ok_or_else(|| "query is required".to_string())?;
+    let project = scoped_project(args);
+    let depth = arg_i64(args, "depth").unwrap_or(2).clamp(1, 3) as usize;
+    let budget = arg_i64(args, "budget").unwrap_or(2000).max(200) as usize;
+
+    let view = crate::graph::query(&ctx.db, project.as_deref(), &query, depth, budget)
+        .map_err(|e| e.to_string())?;
+
+    if view.nodes.is_empty() {
+        return text_result(&json!({
+            "nodes": [],
+            "edges": [],
+            "seeds": [],
+            "truncated": false,
+            "hint": "no node matched; try a broader term or memory.search",
+        }));
+    }
+
+    text_result(&graph_view_json(ctx, &view, project.is_some()))
+}
+
+fn graph_neighbors(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let node = arg_str(args, "node").ok_or_else(|| "node is required".to_string())?;
+    let project = scoped_project(args);
+    let hops = arg_i64(args, "hops").unwrap_or(1).clamp(1, 3) as usize;
+    let budget = arg_i64(args, "budget").unwrap_or(1500).max(200) as usize;
+
+    let view = crate::graph::neighbors(&ctx.db, project.as_deref(), &node, hops, budget)
+        .map_err(|e| e.to_string())?;
+    text_result(&graph_view_json(ctx, &view, project.is_some()))
+}
+
+fn graph_path(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let from = arg_str(args, "from").ok_or_else(|| "from is required".to_string())?;
+    let to = arg_str(args, "to").ok_or_else(|| "to is required".to_string())?;
+    let project = scoped_project(args);
+
+    let path = crate::graph::find_path(&ctx.db, project.as_deref(), &from, &to)
+        .map_err(|e| e.to_string())?;
+
+    let nodes: Vec<Value> = path
+        .nodes
+        .iter()
+        .map(|node| {
+            let path = node.path.as_deref().map(|path| match node.project.as_deref() {
+                Some(slug) => relative_for(ctx, slug, path),
+                None => path.to_string(),
+            });
+            json!({ "id": node.id, "kind": node.kind, "label": node.label, "path": path })
+        })
+        .collect();
+
+    text_result(&json!({
+        "from": path.from,
+        "to": path.to,
+        "hops": path.hops,
+        "nodes": nodes,
+        "edges": path.edges,
+    }))
+}
+
+fn graph_explain(ctx: &McpContext, args: &Value) -> Result<String, String> {
+    let node = arg_str(args, "node").ok_or_else(|| "node is required".to_string())?;
+    let project = scoped_project(args);
+    let limit = arg_i64(args, "limit").unwrap_or(40).clamp(1, 200) as usize;
+
+    let explain = crate::graph::explain(&ctx.db, project.as_deref(), &node, limit)
+        .map_err(|e| e.to_string())?;
+
+    let connections: Vec<Value> = explain
+        .connections
+        .iter()
+        .map(|connection| {
+            let path = connection.path.as_deref().map(|path| {
+                relative_for(
+                    ctx,
+                    project.as_deref().unwrap_or("global"),
+                    path,
+                )
+            });
+            json!({
+                "direction": connection.direction,
+                "kind": connection.kind,
+                "id": connection.id,
+                "label": connection.label,
+                "nodeKind": connection.node_kind,
+                "path": path,
+            })
+        })
+        .collect();
+
+    text_result(&json!({
+        "node": {
+            "id": explain.node.id,
+            "kind": explain.node.kind,
+            "label": explain.node.label,
+            "path": explain.node.path.as_deref().map(|path| {
+                relative_for(ctx, project.as_deref().unwrap_or("global"), path)
+            }),
+        },
+        "degree": explain.degree,
+        "connections": connections,
+        "truncated": explain.degree > connections.len(),
+    }))
 }
 
 fn tasks_list(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+    let project = scoped_project(args);
     let status = arg_str(args, "status").filter(|value| !value.is_empty());
     let query = arg_str(args, "query").filter(|value| !value.is_empty());
-    let compact = args
-        .get("compact")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true);
+    let compact = arg_bool(args, "compact", true);
 
     let tasks =
         db::tasks::list(&ctx.db, project.as_deref(), status.as_deref(), query.as_deref())
@@ -845,7 +1375,7 @@ fn write_task_file(
 }
 
 fn tasks_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+    let project = scoped_project(args);
     let spec = task_spec(args)?;
     let id = write_task_file(ctx, project.as_deref(), &spec)?;
     ctx.reindex().map_err(|e| e.to_string())?;
@@ -857,7 +1387,7 @@ fn tasks_create(ctx: &McpContext, args: &Value) -> Result<String, String> {
 }
 
 fn tasks_create_many(ctx: &McpContext, args: &Value) -> Result<String, String> {
-    let project = arg_str(args, "project").filter(|value| !value.is_empty() && value != "all");
+    let project = scoped_project(args);
     let items = args
         .get("tasks")
         .and_then(|value| value.as_array())

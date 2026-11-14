@@ -380,12 +380,23 @@ pub fn ensure_allowed(
 }
 
 fn mtime(path: &Path) -> i64 {
+    // Millisegundos: segundos faziam duas edições no mesmo segundo passarem
+    // como "sem mudança" no reindex incremental.
     std::fs::metadata(path)
         .ok()
         .and_then(|metadata| metadata.modified().ok())
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs() as i64)
+        .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Acumula o que foi lido do disco durante um scan.
+#[derive(Default)]
+struct ScanState {
+    memory: Vec<MemoryRow>,
+    tasks: Vec<TaskRow>,
+    /// Todo caminho visitado, mesmo os que foram reaproveitados do índice.
+    seen: HashSet<String>,
 }
 
 /// Reindexa o workspace inteiro no SQLite (memória + tasks + lembretes).
@@ -394,29 +405,91 @@ pub fn reindex(conn: &rusqlite::Connection, workspace: &Path) -> AppResult<usize
     reindex_with_linked(conn, workspace, &[])
 }
 
-/// Reindexa o workspace + projetos vinculados.
+/// Reindexa o workspace + projetos vinculados, relendo só o que mudou.
+///
+/// O `mtime` de cada arquivo é comparado com o índice: arquivos inalterados
+/// não são lidos nem reescritos. Alterações são aplicadas linha a linha e os
+/// triggers do FTS mantêm a busca em sincronia.
 pub fn reindex_with_linked(
     conn: &rusqlite::Connection,
     workspace: &Path,
     linked: &[LinkedRoot],
 ) -> AppResult<usize> {
-    let (mut memory_rows, mut task_rows) = scan_workspace(workspace)?;
+    let known = crate::db::memory::snapshot(conn)?;
+    let mut state = ScanState::default();
+
+    if workspace.exists() {
+        scan_tree(workspace, workspace, None, &known, &mut state);
+    }
     for item in linked {
         if item.root.exists() {
             scan_tree(
                 workspace,
                 &item.root,
                 Some(&item.slug),
-                &mut memory_rows,
-                &mut task_rows,
+                &known,
+                &mut state,
             );
         }
     }
 
-    dedupe_rows(&mut memory_rows, &mut task_rows);
-    crate::db::memory::replace_all(conn, &memory_rows)?;
-    crate::db::tasks::replace_all(conn, &task_rows)?;
-    Ok(memory_rows.len())
+    dedupe_rows(&mut state.memory, &mut state.tasks);
+    sync_index(conn, &known, state)
+}
+
+fn sync_index(
+    conn: &rusqlite::Connection,
+    known: &std::collections::HashMap<String, (i64, String)>,
+    state: ScanState,
+) -> AppResult<usize> {
+    let total = state.seen.len();
+
+    // Memória: remove sumidos, grava só os que mudaram.
+    let removed: Vec<String> = known
+        .keys()
+        .filter(|path| !state.seen.contains(*path))
+        .cloned()
+        .collect();
+    crate::db::memory::delete_paths(conn, &removed)?;
+
+    let changed: Vec<MemoryRow> = state
+        .memory
+        .into_iter()
+        .filter(|row| known.get(&row.file_path) != Some(&(row.updated_at, row.project.clone())))
+        .collect();
+    crate::db::memory::upsert_rows(conn, &changed)?;
+    let memory_changed = !changed.is_empty() || !removed.is_empty();
+
+    // Tasks derivam dos mesmos arquivos: apaga as removidas/alteradas e
+    // reinsere só elas.
+    let mut touched: Vec<String> = removed;
+    touched.extend(changed.iter().map(|row| row.file_path.clone()));
+    crate::db::tasks::delete_paths(conn, &touched)?;
+
+    let touched: HashSet<&str> = touched.iter().map(String::as_str).collect();
+    let tasks: Vec<TaskRow> = state
+        .tasks
+        .into_iter()
+        .filter(|row| touched.contains(row.file_path.as_str()))
+        .collect();
+    let tasks_changed = !tasks.is_empty();
+    crate::db::tasks::insert_rows(conn, &tasks)?;
+    crate::db::tasks::prune_reminders(conn)?;
+
+    // Só invalida o cache do grafo quando algo realmente mudou.
+    if memory_changed || tasks_changed {
+        crate::db::meta_set(
+            conn,
+            "memory_version",
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis())
+                .unwrap_or(0)
+                .to_string(),
+        )?;
+    }
+
+    Ok(total)
 }
 
 fn dedupe_rows(memory: &mut Vec<MemoryRow>, tasks: &mut Vec<TaskRow>) {
@@ -542,21 +615,27 @@ where
     }
 }
 
+#[allow(dead_code)] // usado nos testes
 pub fn scan_workspace(workspace: &Path) -> AppResult<(Vec<MemoryRow>, Vec<TaskRow>)> {
-    let mut memory = Vec::new();
-    let mut tasks = Vec::new();
+    let mut state = ScanState::default();
     if workspace.exists() {
-        scan_tree(workspace, workspace, None, &mut memory, &mut tasks);
+        scan_tree(
+            workspace,
+            workspace,
+            None,
+            &std::collections::HashMap::new(),
+            &mut state,
+        );
     }
-    Ok((memory, tasks))
+    Ok((state.memory, state.tasks))
 }
 
 fn scan_tree(
     workspace: &Path,
     base: &Path,
     project_override: Option<&str>,
-    memory: &mut Vec<MemoryRow>,
-    tasks: &mut Vec<TaskRow>,
+    known: &std::collections::HashMap<String, (i64, String)>,
+    state: &mut ScanState,
 ) {
     if !base.exists() {
         return;
@@ -581,7 +660,7 @@ fn scan_tree(
     }
 
     for path in paths {
-        scan_file(workspace, project_override, &path, memory, tasks);
+        scan_file(workspace, project_override, &path, known, state);
     }
 }
 
@@ -589,12 +668,26 @@ fn scan_file(
     workspace: &Path,
     project_override: Option<&str>,
     path: &Path,
-    memory: &mut Vec<MemoryRow>,
-    tasks: &mut Vec<TaskRow>,
+    known: &std::collections::HashMap<String, (i64, String)>,
+    state: &mut ScanState,
 ) {
+    let file_path = path.to_string_lossy().to_string();
+    let updated_at = mtime(path);
+
+    // Inalterado desde a última indexação: reaproveita o que já está no banco.
+    if let Some((known_mtime, known_project)) = known.get(&file_path) {
+        let same_project =
+            project_override.is_none() || project_override == Some(known_project.as_str());
+        if *known_mtime == updated_at && same_project {
+            state.seen.insert(file_path);
+            return;
+        }
+    }
+
     let Ok(parsed) = read_note_file_detailed(path) else {
         return;
     };
+    state.seen.insert(file_path.clone());
 
     let frontmatter = &parsed.frontmatter;
     let project = project_override
@@ -613,10 +706,8 @@ fn scan_file(
     links.extend(extract_wiki_links(&parsed.body));
     links.sort();
     links.dedup();
-    let updated_at = mtime(path);
-    let file_path = path.to_string_lossy().to_string();
 
-    memory.push(MemoryRow {
+    state.memory.push(MemoryRow {
         file_path: file_path.clone(),
         kind: kind.clone(),
         title: title.clone(),
@@ -635,7 +726,7 @@ fn scan_file(
                 .unwrap_or_else(|| "task".into());
             format!("task-{stem}")
         });
-        tasks.push(TaskRow {
+        state.tasks.push(TaskRow {
             id,
             file_path,
             title,
@@ -1215,6 +1306,46 @@ mod tests {
         assert_eq!(config.linked_projects.len(), 1);
         let ignore = std::fs::read_to_string(root.join(".betastartignore")).expect("ignore");
         assert_eq!(ignore.matches("examples/").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn incremental_reindex_updates_and_removes() {
+        let base = std::env::temp_dir().join(format!(
+            "betastart-incremental-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let workspace = base.join("workspace");
+        std::fs::create_dir_all(workspace.join("global/inbox")).expect("workspace");
+
+        std::fs::write(workspace.join("global/inbox/a.md"), "# Alpha\n\nconteudo antigo\n")
+            .expect("a");
+        std::fs::write(workspace.join("global/inbox/b.md"), "# Beta\n\nsegunda nota\n")
+            .expect("b");
+
+        let db_path = base.join("data.db");
+        let conn = crate::db::open(&db_path).expect("db");
+        assert_eq!(reindex_with_linked(&conn, &workspace, &[]).expect("first"), 2);
+
+        // Edita uma nota e apaga a outra.
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        std::fs::write(workspace.join("global/inbox/a.md"), "# Alpha\n\nconteudo novo\n")
+            .expect("rewrite");
+        std::fs::remove_file(workspace.join("global/inbox/b.md")).expect("remove");
+
+        assert_eq!(reindex_with_linked(&conn, &workspace, &[]).expect("second"), 1);
+
+        let files = crate::db::memory::list_files(&conn, Some("global")).expect("files");
+        assert_eq!(files.len(), 1);
+        assert!(files[0].name.starts_with("a.md"));
+
+        // O FTS acompanha a escrita incremental via triggers.
+        let hits = crate::db::memory::search(&conn, None, "novo", &[], 10).expect("search");
+        assert_eq!(hits.len(), 1);
+        let old = crate::db::memory::search(&conn, None, "antigo", &[], 10).expect("search old");
+        assert!(old.is_empty(), "conteúdo antigo não pode continuar indexado");
 
         let _ = std::fs::remove_dir_all(&base);
     }

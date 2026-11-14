@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use rusqlite::types::Value;
@@ -6,6 +7,84 @@ use rusqlite::{Connection, params, params_from_iter};
 use crate::error::AppResult;
 use crate::models::{MemoryFile, MemoryHit, MemoryRow};
 
+/// `file_path` -> (`updated_at` em ms, projeto) do índice atual.
+///
+/// Base do reindex incremental: arquivos com o mesmo mtime não são relidos.
+pub fn snapshot(conn: &Connection) -> AppResult<HashMap<String, (i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, COALESCE(updated_at, 0), COALESCE(project, '') FROM memory_index",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (path, updated_at, project) = row?;
+        out.insert(path, (updated_at, project));
+    }
+    Ok(out)
+}
+
+/// Insere/atualiza apenas as linhas informadas (os triggers mantêm o FTS).
+pub fn upsert_rows(conn: &Connection, rows: &[MemoryRow]) -> AppResult<usize> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO memory_index
+               (file_path, kind, title, project, tags, links, content, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(file_path) DO UPDATE SET
+               kind = excluded.kind,
+               title = excluded.title,
+               project = excluded.project,
+               tags = excluded.tags,
+               links = excluded.links,
+               content = excluded.content,
+               updated_at = excluded.updated_at",
+        )?;
+        for row in rows {
+            let tags = serde_json::to_string(&row.tags)?;
+            let links = serde_json::to_string(&row.links)?;
+            stmt.execute(params![
+                row.file_path,
+                row.kind,
+                row.title,
+                row.project,
+                tags,
+                links,
+                row.content,
+                row.updated_at
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(rows.len())
+}
+
+/// Remove do índice os arquivos que não existem mais.
+pub fn delete_paths(conn: &Connection, paths: &[String]) -> AppResult<usize> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare("DELETE FROM memory_index WHERE file_path = ?1")?;
+        for path in paths {
+            stmt.execute(params![path])?;
+        }
+    }
+    tx.commit()?;
+    Ok(paths.len())
+}
+
+#[allow(dead_code)] // usado nos testes e como caminho de reindexação total
 pub fn replace_all(conn: &Connection, rows: &[MemoryRow]) -> AppResult<usize> {
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM memory_index", [])?;
@@ -175,6 +254,55 @@ fn filter_memory_tags(items: Vec<MemoryHit>, tags: &[String], limit: usize) -> V
         })
         .take(limit)
         .collect()
+}
+
+/// Linha enxuta para o `project.brief`, já ordenada por "importância":
+/// grau aproximado (links + tags) primeiro, depois recência.
+pub struct BriefRow {
+    pub file_path: String,
+    pub kind: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub updated_at: i64,
+}
+
+pub fn brief_rows(conn: &Connection, project: Option<&str>) -> AppResult<Vec<BriefRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, kind, title, tags,
+                COALESCE((length(links) - length(replace(links, '\"', ''))) / 2, 0) AS link_count,
+                COALESCE(updated_at, 0)
+           FROM memory_index
+          WHERE (?1 IS NULL OR project = ?1)",
+    )?;
+    let rows = stmt.query_map(params![project], |row| {
+        let tags: String = row.get(3)?;
+        let links: i64 = row.get(4)?;
+        Ok((
+            BriefRow {
+                file_path: row.get(0)?,
+                kind: row.get(1)?,
+                title: row.get(2)?,
+                tags: serde_json::from_str(&tags).unwrap_or_default(),
+                updated_at: row.get(5)?,
+            },
+            links,
+        ))
+    })?;
+
+    let mut out = Vec::new();
+    for row in rows {
+        let (item, links) = row?;
+        out.push((item, links));
+    }
+    out.sort_by(|left, right| {
+        let left_weight = left.0.tags.len() as i64 + left.1;
+        let right_weight = right.0.tags.len() as i64 + right.1;
+        right_weight
+            .cmp(&left_weight)
+            .then(right.0.updated_at.cmp(&left.0.updated_at))
+            .then(left.0.file_path.cmp(&right.0.file_path))
+    });
+    Ok(out.into_iter().map(|(item, _)| item).collect())
 }
 
 #[allow(dead_code)]

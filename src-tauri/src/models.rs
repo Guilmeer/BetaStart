@@ -271,7 +271,7 @@ pub struct NewTask {
     pub body: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphNode {
     pub id: String,
@@ -281,7 +281,7 @@ pub struct GraphNode {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphEdge {
     pub source: String,
@@ -319,11 +319,64 @@ pub struct McpClientCreated {
     pub client: McpClient,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Graph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+}
+
+/// Referência curta a um nó (id + rótulo) usada nas sementes de uma consulta.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphSeed {
+    pub id: String,
+    pub label: String,
+}
+
+/// Subgrafo escopado devolvido por `graph.query` / `graph.neighbors`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphView {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    /// Sementes que originaram o recorte (id + rótulo, para desambiguar).
+    pub seeds: Vec<GraphSeed>,
+    /// `true` quando o orçamento de tokens cortou parte da vizinhança.
+    pub truncated: bool,
+    pub total_nodes: usize,
+    pub total_edges: usize,
+}
+
+/// Caminho mais curto entre dois nós.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphPath {
+    pub from: String,
+    pub to: String,
+    pub hops: usize,
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphConnection {
+    /// `out` (o nó aponta para o vizinho) ou `in` (o vizinho aponta para o nó).
+    pub direction: String,
+    pub kind: String,
+    pub id: String,
+    pub label: String,
+    pub node_kind: String,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphExplain {
+    pub node: GraphNode,
+    pub degree: usize,
+    pub connections: Vec<GraphConnection>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

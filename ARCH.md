@@ -106,6 +106,8 @@ Um projeto também pode apontar para uma pasta já existente do usuário. Nesse 
 - `.betastart/` é sempre indexado, mesmo que esteja no `.gitignore`;
 - notas/tasks criadas pela UI vão para `<root>/.betastart/notes` e `<root>/.betastart/tasks`;
 - um watcher (`notify`) observa workspace + roots vinculados e reindexa mudanças externas;
+- o reindex é **incremental**: arquivos com o mesmo `mtime` (em ms) não são relidos nem reescritos;
+  só os alterados são atualizados, e os triggers do FTS5 mantêm a busca em sincronia;
 - o mesmo watcher reconcilia `config.json` a cada 2s: vínculos feitos pelo MCP (`project.link`)
   entram no estado do app e a UI atualiza sozinha, sem reabrir;
 - o sandbox de escrita (`ensure_allowed`) aceita workspace + roots vinculados, nada fora deles;
@@ -615,16 +617,21 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
 
 | Tool | Escopo | Parâmetros | Retorno |
 |---|---|---|---|
-| `memory.read` | memory | `{ path, project? }` | conteúdo (absoluto, ou relativo ao projeto) |
+| `memory.read` | memory | `{ path, project?, mode?, start?, end?, maxBytes? }` | `full` (texto bruto, teto de bytes), `outline` (títulos + linhas) ou `range` (linhas) |
 | `memory.write` | memory | `{ path, project?, content }` | ok (mesmos tipos do read) |
-| `memory.list` | memory | `{ project?: string }` | árvore/lista de arquivos |
+| `memory.list` | memory | `{ project?, limit?, offset?, compact? }` | página de arquivos com caminho relativo ao projeto |
 | `memory.search` | memory | `{ query, project?, tags?, limit? }` | hits (todos os termos, em qualquer ordem) |
-| `project.list` | memory | — | projetos |
+| `memory.context` | memory | `{ query, project?, limit?, budget? }` | pacote ranqueado: notas + tasks abertas + vizinhança |
+| `project.list` | memory | — | projetos (slug, título, modo, disponibilidade) |
 | `project.create` | memory | `{ slug, title }` | projeto gerenciado no workspace |
 | `project.link` | memory | `{ root, title?, slug?, ignore? }` | projeto vinculado (idempotente; `ignore` vai para `.betastartignore`) |
 | `project.unlink` | memory | `{ slug }` | ok (não apaga arquivos) |
-| `project.brief` | memory | `{ project? }` | digest: metadados, notas com caminho relativo, contagem de tasks por status + primeiras abertas |
-| `graph.get` | memory | `{ project? }` | nós/arestas do grafo |
+| `project.brief` | memory | `{ project? }` | digest: metadados, notas rankeadas por grau/recência (caminho relativo), contagem de tasks por status + primeiras abertas |
+| `graph.get` | memory | `{ project? }` | grafo inteiro (caro; só para "mostre o grafo") |
+| `graph.query` | memory | `{ query, project?, depth?, budget? }` | subgrafo ao redor dos termos, cortado por orçamento |
+| `graph.neighbors` | memory | `{ node, project?, hops?, budget? }` | vizinhança de um nó |
+| `graph.path` | memory | `{ from, to, project? }` | caminho mais curto, com o tipo de cada aresta |
+| `graph.explain` | memory | `{ node, project?, limit? }` | grau do nó + conexões diretas (direção e tipo) |
 | `tasks.list` | tasks | `{ project?, status?, query?, compact? }` | tasks (compactas por padrão: id/título/status/prioridade/due/tags) |
 | `tasks.create` | tasks | `{ title, project?, parent?, due?, priority?, tags?, body? }` | task compacta |
 | `tasks.create_many` | tasks | `{ project?, tasks: [...] }` | lote criado (até 100, um único reindex) |
@@ -632,7 +639,7 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
 | `tasks.delete` | tasks | `{ id }` | ok |
 | `windows.list` | windows | — | janelas abertas |
 | `windows.move_resize` | windows | `{ handle, monitor, x, y, w, h }` | ok |
-| `windows.apply_layout` | windows | `{ layout_id }` | ok |
+| `windows.apply_layout` | windows | `{ id }` | ok |
 | `windows.save_layout` | windows | `{ name }` | layout_id |
 | `extensions.list` | extensions | — | extensões |
 | `extensions.run` | extensions | `{ ext_id, command_id, args }` | resultado |
@@ -641,7 +648,25 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
 | `settings.get` / `settings.set` | settings | `{ key?, value }` | config |
 
 **Regra de escopo:** uma tool que exige escopo não concedido retorna erro MCP
-`{"code": -32001, "message": "permission denied"}`.
+`{"code": -32001, "message": "permission denied"}`. `resources/list` e `resources/read` também exigem
+o escopo `memory` (antes vazavam o workspace inteiro).
+
+**Economia de tokens (regras do servidor):**
+
+- toda resposta é **JSON compacto** (sem indentação);
+- `memory.read` tem teto de bytes e modos `outline`/`range`;
+- `graph.*` aceita `budget` (tokens aproximados) e devolve `truncated`;
+- caminhos voltam **relativos ao projeto**; `project` acompanha para resolver no `memory.read`;
+- ids de nó são hashes curtos e estáveis (a UI usa como chave; a IA em `graph.explain`).
+
+### 8.4 Orientação para o cliente (always-on)
+
+- `initialize` devolve `instructions` com o protocolo de leitura (brief → search → outline/range →
+  context → graph.*), para o modelo não encadear leituras amplas.
+- A tela MCP tem **Install guidance**: escreve/atualiza um bloco marcado
+  (`<!-- betastart:begin --> … <!-- betastart:end -->`) no `AGENTS.md` da raiz do projeto, sem
+  destruir conteúdo existente. É o equivalente ao `graphify install --project`.
+
 
 ---
 
@@ -661,6 +686,8 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
 ## 10. Modelo do grafo (force-directed)
 
 - **Nós**: `project`, `note`, `task`, `tag`, `file` (anexos).
+- **Id do nó**: hash FNV-1a de 64 bits do caminho (`n` + 16 hex). Curto e estável entre refreshes;
+  o caminho absoluto fica em `path` (a UI usa para abrir a nota).
 - **Arestas** (tipos):
   - `parent` — task → subtask; projeto → filho; pasta → arquivo.
   - `link` — wiki-link `[[...]]` entre notas/arquivos.
@@ -668,7 +695,13 @@ Cada tool define `name`, `description` e `inputSchema` (JSON Schema). Assinatura
   - `project` — item → projeto.
   - `dependency` — (futuro) task → task.
 - Render com `d3-force` (ou `force-graph`) no painel lateral; nós coloridos por `kind`,
-  tamanho por número de conexões, filtro por projeto/tipo. Cache pré-computado em `graph_cache`.
+  tamanho por número de conexões, filtro por projeto/tipo.
+- **Duas visões do mesmo grafo:**
+  - `build_graph` → UI (todos os nós/arestas).
+  - `query` / `neighbors` / `path` / `explain` → IA (subgrafo escopado por termos + orçamento de
+    tokens, corte por grau e recência).
+- Cache em `graph_cache`, invalidado por `meta.memory_version` (incrementado só quando o reindex
+  altera algo).
 
 ---
 
@@ -707,3 +740,6 @@ A camada `platform` (módulo 2) é a única que muda entre SOs; todo o resto é 
 | ADR-007 | Escopo por projeto + busca híbrida (sem embeddings) | economia de tokens sem custo de infraestrutura |
 | ADR-008 | MIT | adoção máxima |
 | ADR-009 | Projetos vinculados indexam `.md` da pasta do usuário no lugar | evita migração/cópia, mantém Git e editores externos; escritas do app ficam restritas a `<root>/.betastart` + arquivos escolhidos |
+| ADR-010 | Consulta por subgrafo com orçamento de tokens (`graph.query/neighbors/path/explain`) | o grafo da UI não serve para a IA: despejar tudo custava dezenas de milhares de tokens |
+| ADR-011 | Reindex incremental por `mtime` (ms) + triggers do FTS5 | reindexar tudo a cada escrita é O(n) e inviabiliza pastas grandes vinculadas |
+| ADR-012 | `initialize.instructions` + bloco em `AGENTS.md` | sem orientação o modelo encadeia leituras amplas; a economia depende de escolher a tool certa |

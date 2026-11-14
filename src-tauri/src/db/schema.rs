@@ -32,8 +32,47 @@ pub fn init(conn: &mut Connection) -> AppResult<()> {
         conn.execute_batch(MIGRATION_V6)?;
         conn.pragma_update(None, "user_version", 6)?;
     }
+    if version < 7 {
+        conn.execute_batch(MIGRATION_V7)?;
+        conn.pragma_update(None, "user_version", 7)?;
+    }
     Ok(())
 }
+
+/// Metadados do índice + triggers do FTS.
+///
+/// O `memory_fts` usa external content, então sem triggers toda escrita
+/// incremental exigiria um `rebuild` completo. Os triggers mantêm o índice
+/// em sincronia e permitem atualizar apenas os arquivos que mudaram.
+const MIGRATION_V7: &str = r#"
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+DROP TRIGGER IF EXISTS memory_index_ai;
+DROP TRIGGER IF EXISTS memory_index_ad;
+DROP TRIGGER IF EXISTS memory_index_au;
+
+CREATE TRIGGER memory_index_ai AFTER INSERT ON memory_index BEGIN
+  INSERT INTO memory_fts(rowid, title, content, tags)
+  VALUES (new.id, new.title, new.content, new.tags);
+END;
+
+CREATE TRIGGER memory_index_ad AFTER DELETE ON memory_index BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, title, content, tags)
+  VALUES ('delete', old.id, old.title, old.content, old.tags);
+END;
+
+CREATE TRIGGER memory_index_au AFTER UPDATE ON memory_index BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, title, content, tags)
+  VALUES ('delete', old.id, old.title, old.content, old.tags);
+  INSERT INTO memory_fts(rowid, title, content, tags)
+  VALUES (new.id, new.title, new.content, new.tags);
+END;
+
+INSERT INTO memory_fts(memory_fts) VALUES('rebuild');
+"#;
 
 const MIGRATION_V6: &str = r#"
 CREATE TABLE IF NOT EXISTS mcp_audit (
