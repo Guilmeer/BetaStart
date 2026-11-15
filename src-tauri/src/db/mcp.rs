@@ -1,6 +1,6 @@
 use rusqlite::{Connection, params};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::models::{McpAudit, McpClient};
 
 pub fn create_client(
@@ -49,6 +49,21 @@ pub fn revoke_client(conn: &Connection, id: i64) -> AppResult<()> {
         "UPDATE mcp_clients SET revoked = 1 WHERE id = ?1",
         params![id],
     )?;
+    Ok(())
+}
+
+/// Remove definitively a revoked client. Active tokens must be revoked first,
+/// so a stray click cannot delete a credential that is still in use.
+pub fn delete_client(conn: &Connection, id: i64) -> AppResult<()> {
+    let changed = conn.execute(
+        "DELETE FROM mcp_clients WHERE id = ?1 AND revoked = 1",
+        params![id],
+    )?;
+    if changed == 0 {
+        return Err(AppError::NotFound(
+            "revoked MCP client not found".into(),
+        ));
+    }
     Ok(())
 }
 

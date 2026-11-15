@@ -120,7 +120,7 @@ Depois volte para HTTPS e remova a opção insegura.
 
 ## 6. Como o usuário vê
 
-Em **⚙ Configurações → Atualizações** há:
+Em **Configurações → Atualizações** há:
 
 - versão instalada;
 - **Verificar atualizações**;

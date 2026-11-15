@@ -9,10 +9,13 @@ import { api } from "./api";
 import { Clipboard } from "./Clipboard";
 import { Extensions } from "./Extensions";
 import { HotkeyInput } from "./HotkeyInput";
+import { Icon, type IconName } from "./Icons";
 import { Mcp } from "./Mcp";
 import { Memory } from "./Memory";
+import { Select } from "./Select";
 import { WindowManager } from "./WindowManager";
 import { useI18n } from "./i18n";
+import { ACCENTS, normalizeAccent } from "./theme";
 import type { Config, SearchResults, StatusInfo } from "./types";
 
 type Screen =
@@ -30,7 +33,7 @@ const SCREEN_SIZE: Record<Screen, [number, number]> = {
   onboarding: [760, 460],
   settings: [900, 680],
   extensions: [900, 640],
-  windows: [760, 460],
+  windows: [900, 640],
   memory: [1120, 740],
   clipboard: [900, 640],
   mcp: [900, 680],
@@ -40,6 +43,7 @@ interface SettingsDraft {
   hideOnBlur: boolean;
   startOnBoot: boolean;
   theme: string;
+  accent: string;
   language: string;
   clipboardEnabled: boolean;
   clipboardMax: number;
@@ -59,6 +63,7 @@ const DEFAULT_SETTINGS: SettingsDraft = {
   hideOnBlur: true,
   startOnBoot: false,
   theme: "dark",
+  accent: "teal",
   language: "en",
   clipboardEnabled: true,
   clipboardMax: 500,
@@ -189,16 +194,76 @@ function badgeLabel(row: Row): string {
   }
 }
 
+function rowGlyph(kind: Row["kind"]): IconName | null {
+  switch (kind) {
+    case "clipboard":
+      return "clipboard";
+    case "calculator":
+      return "calculator";
+    case "web":
+      return "globe";
+    case "command":
+      return "command";
+    default:
+      return null;
+  }
+}
+
+function rowKindLabel(kind: Row["kind"], t: (key: string) => string): string {
+  switch (kind) {
+    case "app":
+      return t("App");
+    case "file":
+      return t("File");
+    case "clipboard":
+      return t("Clipboard");
+    case "calculator":
+      return t("Calculator");
+    case "web":
+      return t("Web");
+    case "command":
+      return t("Command");
+  }
+}
+
+function rowActionLabel(kind: Row["kind"], t: (key: string) => string): string {
+  switch (kind) {
+    case "app":
+    case "file":
+      return t("Open");
+    case "clipboard":
+      return t("Copy");
+    case "calculator":
+      return t("Copy result");
+    case "web":
+      return t("Open in browser");
+    case "command":
+      return t("Run");
+  }
+}
+
+function compactCount(value: number, language: string): string {
+  return new Intl.NumberFormat(language === "pt-BR" ? "pt-BR" : "en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function countLabel(value: number, language: string): string {
+  return value >= 1000 ? compactCount(value, language) : String(value);
+}
+
 function App() {
   const { t, language, setLanguage } = useI18n();
   const [screen, setScreen] = useState<Screen>("search");
-  const [, setConfig] = useState<Config | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
   const [status, setStatus] = useState<StatusInfo | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState("launcher");
 
   const [mode, setMode] = useState<"off" | "replace">("off");
   const [hotkey, setHotkey] = useState("Alt+Space");
@@ -220,6 +285,8 @@ function App() {
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLUListElement>(null);
+  const settingsContentRef = useRef<HTMLDivElement>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -231,6 +298,9 @@ function App() {
 
   const applyConfig = useCallback((cfg: Config) => {
     setConfig(cfg);
+    document.documentElement.dataset.accent = normalizeAccent(
+      cfg.appearance.accent,
+    );
     setMode(cfg.startMenu.mode === "replace" ? "replace" : "off");
     setHotkey(cfg.hotkeys.launcher);
     setLanguage(cfg.appearance.language || "en");
@@ -238,6 +308,7 @@ function App() {
       hideOnBlur: cfg.tray.hideOnBlur,
       startOnBoot: cfg.tray.startOnBoot,
       theme: cfg.appearance.theme || "dark",
+      accent: normalizeAccent(cfg.appearance.accent),
       language: cfg.appearance.language || "en",
       clipboardEnabled: cfg.clipboard.enabled,
       clipboardMax: cfg.clipboard.maxEntries,
@@ -253,6 +324,65 @@ function App() {
       denoPath: cfg.extensions.denoPath ?? "",
     });
   }, [setLanguage]);
+
+  const openScreen = useCallback((target: Screen) => {
+    setScreen((current) => (current === target ? "search" : target));
+  }, []);
+
+  const settingsDirty = useMemo(() => {
+    if (!config) return false;
+    return (
+      mode !== (config.startMenu.mode === "replace" ? "replace" : "off") ||
+      hotkey.trim() !== config.hotkeys.launcher.trim() ||
+      settings.hideOnBlur !== config.tray.hideOnBlur ||
+      settings.startOnBoot !== config.tray.startOnBoot ||
+      settings.theme !== config.appearance.theme ||
+      normalizeAccent(settings.accent) !==
+        normalizeAccent(config.appearance.accent) ||
+      settings.language !== config.appearance.language ||
+      settings.clipboardEnabled !== config.clipboard.enabled ||
+      Number(settings.clipboardMax) !== config.clipboard.maxEntries ||
+      settings.includeApps !== config.search.includeApps ||
+      settings.includeFiles !== config.search.includeFiles ||
+      settings.indexDirs.join("|") !== config.search.indexDirs.join("|") ||
+      Number(settings.searchMaxResults) !== config.search.maxResults ||
+      settings.autoApplyRules !== config.windows.autoApplyRules ||
+      settings.restoreLastLayout !==
+        (config.windows.restoreLastLayout ?? false) ||
+      settings.mcpEnabled !== config.mcp.enabled ||
+      Number(settings.mcpPort) !== config.mcp.http.port ||
+      settings.storeUrl.trim() !== config.extensions.storeUrl.trim() ||
+      settings.denoPath.trim() !== (config.extensions.denoPath ?? "").trim()
+    );
+  }, [config, mode, hotkey, settings]);
+
+  const navItems = useMemo<
+    Array<{ key: Screen; label: string; icon: IconName }>
+  >(
+    () => [
+      { key: "clipboard", label: t("Clipboard"), icon: "clipboard" },
+      { key: "mcp", label: "MCP", icon: "mcp" },
+      { key: "memory", label: t("Memory & Tasks"), icon: "memory" },
+      { key: "windows", label: t("Window manager"), icon: "windows" },
+      { key: "extensions", label: t("Extensions"), icon: "extensions" },
+      { key: "settings", label: t("Settings"), icon: "settings" },
+    ],
+    [t],
+  );
+
+  const settingsSections = useMemo(
+    () => [
+      { id: "launcher", label: t("Launcher") },
+      { id: "appearance", label: t("Appearance") },
+      { id: "updates", label: t("Updates") },
+      { id: "search", label: t("Search & index") },
+      { id: "clipboard", label: t("Clipboard") },
+      { id: "windows", label: t("Windows") },
+      { id: "mcp", label: "MCP" },
+      { id: "extensions", label: t("Extensions") },
+    ],
+    [t],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -280,12 +410,16 @@ function App() {
             ? "light"
             : "dark"
           : settings.theme;
-      document.documentElement.dataset.theme = resolved === "light" ? "light" : "dark";
+      document.documentElement.dataset.theme =
+        resolved === "light" ? "light" : "dark";
+      document.documentElement.dataset.accent = normalizeAccent(
+        settings.accent,
+      );
     };
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [settings.theme]);
+  }, [settings.theme, settings.accent]);
 
   // O config.json também muda por fora (ex.: MCP vinculando um projeto).
   useEffect(() => {
@@ -315,6 +449,37 @@ function App() {
     if (screen === "search") {
       inputRef.current?.focus();
     }
+  }, [screen]);
+
+  // Mantém o item selecionado visível quando a navegação é feita pelo teclado.
+  useEffect(() => {
+    const node = resultsRef.current?.querySelector<HTMLElement>(
+      `[data-result-index="${selected}"]`,
+    );
+    node?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+
+  // Destaca a seção visível no índice de configurações.
+  useEffect(() => {
+    if (screen !== "settings") return;
+    const container = settingsContentRef.current;
+    if (!container) return;
+    const update = () => {
+      const sections = [
+        ...container.querySelectorAll<HTMLElement>("[data-settings-section]"),
+      ];
+      const threshold = container.getBoundingClientRect().top + 28;
+      let current = sections[0]?.dataset.settingsSection;
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= threshold) {
+          current = section.dataset.settingsSection;
+        }
+      }
+      if (current) setSettingsSection(current);
+    };
+    update();
+    container.addEventListener("scroll", update, { passive: true });
+    return () => container.removeEventListener("scroll", update);
   }, [screen]);
 
   // A tela de memória precisa de mais espaço.
@@ -503,17 +668,41 @@ function App() {
     setSettings((current) => ({ ...current, ...patch }));
   }, []);
 
+  const clearSearch = useCallback(() => {
+    setQuery("");
+    setSelected(0);
+    inputRef.current?.focus();
+  }, []);
+
+  const jumpToSettingsSection = useCallback((id: string) => {
+    const target = settingsContentRef.current?.querySelector<HTMLElement>(
+      `[data-settings-section="${id}"]`,
+    );
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    target?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "start",
+    });
+    setSettingsSection(id);
+  }, []);
+
   /// Tema e idioma têm efeito imediato: persiste na hora em vez de esperar
   /// o botão Save (que fica no fim de uma tela longa).
   const saveAppearance = useCallback(
-    async (patch: { theme?: string; language?: string }) => {
+    async (patch: { theme?: string; language?: string; accent?: string }) => {
       updateSettings(patch);
       if (patch.language) setLanguage(patch.language);
       const appearance: Record<string, string> = {};
       if (patch.theme !== undefined) appearance.theme = patch.theme;
       if (patch.language !== undefined) appearance.language = patch.language;
+      if (patch.accent !== undefined) {
+        appearance.accent = normalizeAccent(patch.accent);
+      }
       try {
-        await api.setConfig({ appearance });
+        const cfg = await api.setConfig({ appearance });
+        setConfig(cfg);
       } catch (error) {
         setSettingsMsg(String(error));
       }
@@ -591,7 +780,11 @@ function App() {
           autoApplyRules: settings.autoApplyRules,
           restoreLastLayout: settings.restoreLastLayout,
         },
-        appearance: { theme: settings.theme, language: settings.language },
+        appearance: {
+          theme: settings.theme,
+          language: settings.language,
+          accent: settings.accent,
+        },
         mcp: {
           enabled: settings.mcpEnabled,
           http: {
@@ -727,98 +920,100 @@ function App() {
     <div className="launcher">
       <header className="topbar" data-tauri-drag-region>
         <div className="brand">
-          <span className="logo" />
+          <span className="brand-mark" aria-hidden="true">
+            β
+          </span>
           <span className="brand-name">Beta Start</span>
           <span className="version">v{status?.version ?? "0.1.0"}</span>
         </div>
         <div className="topbar-right">
-          <span className="status">
+          <span
+            className="status"
+            title={
+              status
+                ? t("{apps} apps · {files} files · {clips} clips · {exts} ext", {
+                    apps: status.appsIndexed,
+                    files: status.filesIndexed,
+                    clips: status.clipboardCount,
+                    exts: status.extensionsCount,
+                  })
+                : undefined
+            }
+          >
             {status
-              ? t("{apps} apps · {files} files · {clips} clips · {exts} ext", {
+              ? t("{apps} apps · {files} files", {
                   apps: status.appsIndexed,
-                  files: status.filesIndexed,
-                  clips: status.clipboardCount,
-                  exts: status.extensionsCount,
+                  files: countLabel(status.filesIndexed, language),
                 })
               : t("loading…")}
           </span>
-          <button
-            className="icon-btn"
-            title={t("Clipboard")}
-            onClick={() =>
-              setScreen(screen === "clipboard" ? "search" : "clipboard")
-            }
-          >
-            📋
-          </button>
-          <button
-            className="icon-btn"
-            title="MCP"
-            onClick={() => setScreen(screen === "mcp" ? "search" : "mcp")}
-          >
-            🔌
-          </button>
-          <button
-            className="icon-btn"
-            title={t("Memory & Tasks")}
-            onClick={() =>
-              setScreen(screen === "memory" ? "search" : "memory")
-            }
-          >
-            🧠
-          </button>
-          <button
-            className="icon-btn"
-            title={t("Window manager")}
-            onClick={() =>
-              setScreen(screen === "windows" ? "search" : "windows")
-            }
-          >
-            🪟
-          </button>
-          <button
-            className="icon-btn"
-            title={t("Extensions")}
-            onClick={() =>
-              setScreen(screen === "extensions" ? "search" : "extensions")
-            }
-          >
-            🧩
-          </button>
-          <button
-            className="icon-btn"
-            title={t("Settings")}
-            onClick={() =>
-              setScreen(screen === "settings" ? "search" : "settings")
-            }
-          >
-            ⚙
-          </button>
+          <nav className="topbar-nav" aria-label={t("Modules")}>
+            {navItems.map((item) => (
+              <button
+                key={item.key}
+                className={`icon-btn${
+                  screen === item.key ? " is-active" : ""
+                }`}
+                type="button"
+                data-tip={item.label}
+                aria-label={item.label}
+                aria-pressed={screen === item.key}
+                onClick={() => openScreen(item.key)}
+              >
+                <Icon name={item.icon} size={16} />
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
 
       {screen === "onboarding" && (
         <section className="onboarding">
+          <div className="onboarding-brand">
+            <span className="brand-mark" aria-hidden="true">
+              β
+            </span>
+            <span>Beta Start</span>
+          </div>
           <h1>{t("How do you want to open Beta Start?")}</h1>
-          <p>{t("You can change this later in the ⚙ menu.")}</p>
+          <p>{t("You can change this later in the settings.")}</p>
           <div className="choices">
             <button
               className="choice"
+              type="button"
               onClick={() => void chooseOnboarding("off")}
             >
-              <strong>{t("Use Alt + Space (recommended)")}</strong>
-              <span>
-                {t("Does not touch the Windows key. Opens/closes Beta Start with Alt+Space.")}
+              <span className="choice-icon" aria-hidden="true">
+                <Icon name="command" size={18} />
               </span>
+              <span className="choice-body">
+                <span className="choice-title">
+                  {t("Use Alt + Space")}
+                  <span className="choice-tag">{t("Recommended")}</span>
+                </span>
+                <span className="choice-desc">
+                  {t("Does not touch the Windows key. Opens/closes Beta Start with Alt+Space.")}
+                </span>
+              </span>
+              <kbd className="choice-key">Alt + Space</kbd>
             </button>
             <button
               className="choice"
+              type="button"
               onClick={() => void chooseOnboarding("replace")}
             >
-              <strong>{t("Replace the Windows key")}</strong>
-              <span>
-                {t("The Win key alone opens Beta Start. Combos such as Win+E keep working.")}
+              <span className="choice-icon" aria-hidden="true">
+                <Icon name="windows" size={18} />
               </span>
+              <span className="choice-body">
+                <span className="choice-title">
+                  {t("Replace the Windows key")}
+                </span>
+                <span className="choice-desc">
+                  {t("The Win key alone opens Beta Start. Combos such as Win+E keep working.")}
+                </span>
+              </span>
+              <kbd className="choice-key">Win</kbd>
             </button>
           </div>
           <p className="hint">
@@ -836,7 +1031,21 @@ function App() {
             </button>
           </div>
 
-          <div className="settings-section">
+          <nav className="settings-jump" aria-label={t("Settings sections")}>
+            {settingsSections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={settingsSection === section.id ? "is-active" : ""}
+                onClick={() => jumpToSettingsSection(section.id)}
+              >
+                {section.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="settings-content" ref={settingsContentRef}>
+          <div className="settings-section" data-settings-section="launcher">
             <h2>{t("Launcher")}</h2>
             <div className="field">
               <span className="field-label">{t("Launcher shortcut")}</span>
@@ -844,6 +1053,7 @@ function App() {
                 value={hotkey}
                 onChange={(combo) => setHotkey(combo)}
                 excludeLauncher
+                label={t("Launcher shortcut")}
                 placeholder={t("Click and press the shortcut (e.g. Alt+Space)")}
               />
               <span className="field-hint">
@@ -853,15 +1063,21 @@ function App() {
 
             <div className="field">
               <span className="field-label">{t("Windows key")}</span>
-              <div className="radio-row">
+              <div className="radio-row" role="radiogroup" aria-label={t("Windows key")}>
                 <button
                   className={`radio ${mode === "off" ? "active" : ""}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === "off"}
                   onClick={() => setMode("off")}
                 >
                   {t("Do not replace (recommended)")}
                 </button>
                 <button
                   className={`radio ${mode === "replace" ? "active" : ""}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === "replace"}
                   onClick={() => setMode("replace")}
                 >
                   {t("Replace the Win key")}
@@ -899,15 +1115,14 @@ function App() {
             </label>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="appearance">
             <h2>{t("Appearance")}</h2>
             <span className="field-hint">
-              {t("Theme and language are saved immediately.")}
+              {t("Theme, accent, and language are saved immediately.")}
             </span>
             <label className="field">
               <span className="field-label">{t("Theme")}</span>
-              <select
-                className="text-input"
+              <Select
                 value={settings.theme}
                 onChange={(event) =>
                   void saveAppearance({ theme: event.target.value })
@@ -916,12 +1131,42 @@ function App() {
                 <option value="dark">{t("Dark")}</option>
                 <option value="light">{t("Light")}</option>
                 <option value="auto">{t("Automatic (Windows)")}</option>
-              </select>
+              </Select>
             </label>
+            <div className="field">
+              <span className="field-label">{t("Accent color")}</span>
+              <div
+                className="accent-row"
+                role="group"
+                aria-label={t("Accent color")}
+              >
+                {ACCENTS.map((accent) => {
+                  const active =
+                    normalizeAccent(settings.accent) === accent.id;
+                  return (
+                    <button
+                      key={accent.id}
+                      type="button"
+                      data-accent={accent.id}
+                      className={`accent-option${
+                        active ? " is-active" : ""
+                      }`}
+                      aria-pressed={active}
+                      title={t(accent.label)}
+                      onClick={() =>
+                        void saveAppearance({ accent: accent.id })
+                      }
+                    >
+                      <span className="accent-dot" aria-hidden="true" />
+                      {t(accent.label)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <label className="field">
               <span className="field-label">{t("Language")}</span>
-              <select
-                className="text-input"
+              <Select
                 value={settings.language}
                 onChange={(event) =>
                   void saveAppearance({ language: event.target.value })
@@ -929,11 +1174,11 @@ function App() {
               >
                 <option value="en">English</option>
                 <option value="pt-BR">Português (Brasil)</option>
-              </select>
+              </Select>
             </label>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="updates">
             <h2>{t("Updates")}</h2>
             <div className="settings-grid">
               <div className="field">
@@ -1029,7 +1274,7 @@ function App() {
             </span>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="search">
             <h2>{t("Search & index")}</h2>
             <div className="settings-grid">
               <label className="check-row">
@@ -1095,6 +1340,7 @@ function App() {
                   value={newIndexDir}
                   onChange={(event) => setNewIndexDir(event.target.value)}
                   placeholder={t("C:\\path\\to\\index")}
+                  aria-label={t("Folder to index")}
                   spellCheck={false}
                 />
                 <button
@@ -1114,7 +1360,7 @@ function App() {
             </div>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="clipboard">
             <h2>{t("Clipboard")}</h2>
             <div className="settings-grid">
               <label className="check-row">
@@ -1143,7 +1389,7 @@ function App() {
             </div>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="windows">
             <h2>{t("Windows")}</h2>
             <label className="check-row">
               <input
@@ -1167,7 +1413,7 @@ function App() {
             </label>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="mcp">
             <h2>MCP</h2>
             <div className="settings-grid">
               <label className="check-row">
@@ -1199,7 +1445,7 @@ function App() {
             </span>
           </div>
 
-          <div className="settings-section">
+          <div className="settings-section" data-settings-section="extensions">
             <h2>{t("Extensions")}</h2>
             <label className="field">
               <span className="field-label">{t("Store URL")}</span>
@@ -1226,21 +1472,6 @@ function App() {
             </label>
           </div>
 
-          <div className="settings-actions">
-            <button
-              className="primary"
-              onClick={() => void saveSettings()}
-              disabled={settingsBusy}
-            >
-              {settingsBusy ? t("Saving…") : t("Save")}
-            </button>
-            <button className="secondary" onClick={() => void reindexFiles()}>
-              {t("Reindex files")}
-            </button>
-          </div>
-
-          {settingsMsg && <p className="settings-msg">{settingsMsg}</p>}
-
           {status && (
             <div className="paths">
               <div>
@@ -1257,6 +1488,47 @@ function App() {
               </div>
             </div>
           )}
+          </div>
+
+          {settingsMsg && <p className="settings-msg">{settingsMsg}</p>}
+
+          <div className="save-bar">
+            <span
+              className={`save-state${settingsDirty ? " is-dirty" : ""}`}
+              aria-live="polite"
+            >
+              {settingsBusy ? (
+                t("Saving…")
+              ) : settingsDirty ? (
+                <>
+                  <span className="save-dot" aria-hidden="true" />
+                  {t("Unsaved changes")}
+                </>
+              ) : (
+                <>
+                  <Icon name="check" size={13} />
+                  {t("All changes saved")}
+                </>
+              )}
+            </span>
+            <div className="settings-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => void reindexFiles()}
+              >
+                {t("Reindex files")}
+              </button>
+              <button
+                className="primary"
+                type="button"
+                onClick={() => void saveSettings()}
+                disabled={settingsBusy || !settingsDirty}
+              >
+                {settingsBusy ? t("Saving…") : t("Save changes")}
+              </button>
+            </div>
+          </div>
         </section>
       )}
 
@@ -1286,44 +1558,126 @@ function App() {
 
       {screen === "search" && (
         <>
-          <input
-            ref={inputRef}
-            className="search"
-            placeholder={t("Search apps, files, clipboard, or calculate…")}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-
-          <ul className="results">
-            {rows.length === 0 && (
-              <li className="empty">{t("No results.")}</li>
-            )}
-            {rows.map((row, index) => (
-              <li
-                key={row.key}
-                className={`result ${index === selected ? "selected" : ""}`}
-                onMouseEnter={() => setSelected(index)}
-                onClick={() => void activate(row)}
+          <div className="search-wrap">
+            <Icon className="search-icon" name="search" size={18} />
+            <input
+              ref={inputRef}
+              className="search"
+              placeholder={t("Search apps, files, clipboard, or calculate…")}
+              aria-label={t("Search apps, files, clipboard, or calculate…")}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls="search-results"
+              aria-expanded="true"
+              aria-activedescendant={
+                rows.length > 0 ? `search-result-${selected}` : undefined
+              }
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            {query && (
+              <button
+                className="search-clear"
+                type="button"
+                aria-label={t("Clear search")}
+                title={t("Clear search")}
+                onClick={clearSearch}
               >
-                <span
-                  className={`app-icon badge-${row.kind}${
-                    row.kind === "app" && row.icon ? " has-icon" : ""
-                  }`}
-                >
-                  {row.kind === "app" && row.icon ? (
-                    <img src={row.icon} alt="" />
-                  ) : (
-                    badgeLabel(row)
-                  )}
+                <Icon name="clear" size={14} />
+              </button>
+            )}
+          </div>
+          <span className="visually-hidden" aria-live="polite">
+            {t("{count} result(s)", { count: rows.length })}
+          </span>
+
+          <ul
+            className="results"
+            id="search-results"
+            ref={resultsRef}
+            role="listbox"
+            aria-label={t("Search results")}
+          >
+            {rows.length === 0 && (
+              <li className="empty" role="presentation">
+                <span className="empty-icon" aria-hidden="true">
+                  <Icon
+                    name={query.trim() ? "search" : "command"}
+                    size={22}
+                  />
                 </span>
-                <span className="app-text">
-                  <span className="app-name">{row.title}</span>
-                  <span className="app-path">{row.subtitle}</span>
+                <strong>
+                  {query.trim()
+                    ? t("Nothing found for “{query}”", {
+                        query: query.trim(),
+                      })
+                    : t("Start typing to search")}
+                </strong>
+                <span className="empty-lead">
+                  {t("Search apps, files, clipboard and commands from one place.")}
+                </span>
+                <span className="empty-examples">
+                  <span>
+                    <code>g</code> {t("web search")}
+                  </span>
+                  <span>
+                    <code>12*8+3</code> {t("calculator")}
+                  </span>
                 </span>
               </li>
-            ))}
+            )}
+            {rows.map((row, index) => {
+              const glyph = rowGlyph(row.kind);
+              return (
+                <li
+                  key={row.key}
+                  id={`search-result-${index}`}
+                  data-result-index={index}
+                  className={`result ${
+                    index === selected ? "selected" : ""
+                  }`}
+                  role="option"
+                  aria-selected={index === selected}
+                  onMouseEnter={() => setSelected(index)}
+                  onClick={() => void activate(row)}
+                >
+                  <span
+                    className={`app-icon badge-${row.kind}${
+                      row.kind === "app" && row.icon ? " has-icon" : ""
+                    }`}
+                  >
+                    {row.kind === "app" && row.icon ? (
+                      <img src={row.icon} alt="" />
+                    ) : glyph ? (
+                      <Icon name={glyph} size={15} />
+                    ) : (
+                      badgeLabel(row)
+                    )}
+                  </span>
+                  <span className="app-text">
+                    <span className="app-name">{row.title}</span>
+                    <span className="app-path">{row.subtitle}</span>
+                  </span>
+                  <span className="visually-hidden">
+                    {rowKindLabel(row.kind, t)}
+                  </span>
+                  <span className="result-meta" aria-hidden="true">
+                    {index === selected ? (
+                      <span className="result-action">
+                        {rowActionLabel(row.kind, t)}
+                        <Icon name="arrow-right" size={13} />
+                      </span>
+                    ) : (
+                      <span className="result-kind">
+                        {rowKindLabel(row.kind, t)}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
 
           <footer className="footer">
@@ -1344,7 +1698,11 @@ function App() {
         </>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

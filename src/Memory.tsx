@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { Graph } from "./Graph";
+import { Select } from "./Select";
 import { useI18n } from "./i18n";
 import { MarkdownInline, MarkdownView } from "./Markdown";
 import type {
@@ -724,7 +725,13 @@ export function Memory({ onBack }: { onBack: () => void }) {
           className={`task-card ${task.status === "done" ? "done" : ""} ${hasChildren ? "has-children" : ""}`}
         >
           <div className="task-card-head">
-            <strong onClick={() => void openFile(task.filePath)}>{task.title}</strong>
+            <button
+              type="button"
+              className="task-title"
+              onClick={() => void openFile(task.filePath)}
+            >
+              {task.title}
+            </button>
             <span className={`prio prio-${task.priority}`}>
               {PRIORITY_LABEL[task.priority]
                 ? t(PRIORITY_LABEL[task.priority])
@@ -750,12 +757,20 @@ export function Memory({ onBack }: { onBack: () => void }) {
                   key={status}
                   className={task.status === status ? "active" : ""}
                   disabled={busy}
+                  aria-pressed={task.status === status}
                   onClick={() => void setStatus(task, status)}
                 >
                   {t(STATUS_LABEL[status])}
                 </button>
               ))}
-              <button disabled={busy} onClick={() => void removeTask(task)}>
+              <button
+                type="button"
+                className="task-delete"
+                disabled={busy}
+                aria-label={t("Delete task")}
+                title={t("Delete task")}
+                onClick={() => void removeTask(task)}
+              >
                 ×
               </button>
             </div>
@@ -804,6 +819,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
         <input
           className="text-input"
           placeholder={t("Search memory…")}
+          aria-label={t("Search memory…")}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
@@ -853,6 +869,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
               <input
                 className="text-input"
                 placeholder={t("New project")}
+                aria-label={t("New project")}
                 value={newProject}
                 onChange={(event) => setNewProject(event.target.value)}
                 onKeyDown={(event) => {
@@ -972,6 +989,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 {editorMode === "edit" ? (
                   <input
                     className="note-title"
+                    aria-label={t("Note title")}
                     value={note.title}
                     onChange={(event) => updateNote({ title: event.target.value })}
                   />
@@ -1005,7 +1023,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                       {t("Save")}
                     </button>
                   )}
-                  <button className="secondary" disabled={busy} onClick={() => void deleteNote()}>
+                  <button className="secondary danger" disabled={busy} onClick={() => void deleteNote()}>
                     {t("Delete")}
                   </button>
                 </div>
@@ -1058,8 +1076,8 @@ export function Memory({ onBack }: { onBack: () => void }) {
                 <>
                   {note.kind === "task" && (
                     <div className="task-fields">
-                      <select
-                        className="text-input"
+                      <Select
+                        aria-label={t("Status")}
                         value={note.status ?? "todo"}
                         onChange={(event) => updateNote({ status: event.target.value })}
                       >
@@ -1068,9 +1086,9 @@ export function Memory({ onBack }: { onBack: () => void }) {
                             {t(STATUS_LABEL[status])}
                           </option>
                         ))}
-                      </select>
-                      <select
-                        className="text-input"
+                      </Select>
+                      <Select
+                        aria-label={t("Priority")}
                         value={note.priority ?? "medium"}
                         onChange={(event) => updateNote({ priority: event.target.value })}
                       >
@@ -1079,11 +1097,12 @@ export function Memory({ onBack }: { onBack: () => void }) {
                             {t(label)}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                       <input
                         className="text-input"
                         type="datetime-local"
                         title={t("Due date")}
+                        aria-label={t("Due date")}
                         value={toLocalInput(note.due)}
                         onChange={(event) => updateNote({ due: event.target.value })}
                       />
@@ -1091,6 +1110,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                         className="text-input"
                         type="datetime-local"
                         title={t("Reminder")}
+                        aria-label={t("Reminder")}
                         value={toLocalInput(note.remind)}
                         onChange={(event) => updateNote({ remind: event.target.value })}
                       />
@@ -1100,6 +1120,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                   <input
                     className="text-input"
                     placeholder={t("tags, comma separated")}
+                    aria-label={t("Tags")}
                     value={note.tags.join(", ")}
                     onChange={(event) =>
                       updateNote({
@@ -1113,6 +1134,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
 
                   <textarea
                     className="note-body"
+                    aria-label={t("Note content")}
                     value={note.body}
                     onChange={(event) => updateNote({ body: event.target.value })}
                     placeholder={t("Write here… use # headings, **bold**, lists, [[Note name]], and links")}
@@ -1220,6 +1242,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
             <input
               className="text-input"
               placeholder={t("New task… (Enter to create)")}
+              aria-label={t("Task title")}
               value={taskTitle}
               onChange={(event) => setTaskTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -1230,18 +1253,19 @@ export function Memory({ onBack }: { onBack: () => void }) {
               }}
             />
             <div className="inline">
-              <select
-                className="text-input"
+              <Select
+                aria-label={t("Priority")}
                 value={taskPriority}
                 onChange={(event) => setTaskPriority(event.target.value)}
               >
                 <option value="high">{t("High")}</option>
                 <option value="medium">{t("Medium")}</option>
                 <option value="low">{t("Low")}</option>
-              </select>
+              </Select>
               <input
                 className="text-input"
                 type="datetime-local"
+                aria-label={t("Due date")}
                 value={taskDue}
                 onChange={(event) => setTaskDue(event.target.value)}
               />
@@ -1250,11 +1274,12 @@ export function Memory({ onBack }: { onBack: () => void }) {
               <input
                 className="text-input"
                 placeholder={t("tags, comma separated")}
+                aria-label={t("Tags")}
                 value={taskTags}
                 onChange={(event) => setTaskTags(event.target.value)}
               />
-              <select
-                className="text-input"
+              <Select
+                aria-label={t("Parent task")}
                 value={taskParent}
                 onChange={(event) => setTaskParent(event.target.value)}
               >
@@ -1264,7 +1289,7 @@ export function Memory({ onBack }: { onBack: () => void }) {
                     {task.title}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <button
               className="primary"
@@ -1299,10 +1324,14 @@ export function Memory({ onBack }: { onBack: () => void }) {
                     .filter((task) => task.status === status)
                     .map((task) => (
                       <div className="task-card kanban-card" key={task.id}>
-                        <strong onClick={() => void openFile(task.filePath)}>
+                        <button
+                          type="button"
+                          className="task-title"
+                          onClick={() => void openFile(task.filePath)}
+                        >
                           {task.parentId ? "↳ " : ""}
                           {task.title}
-                        </strong>
+                        </button>
                         <div className="task-actions">
                           {STATUSES.filter((item) => item !== status).map((item) => (
                             <button

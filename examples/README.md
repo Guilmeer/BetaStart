@@ -8,7 +8,7 @@
 
 ## Como instalar
 
-No app, abra **🧩 Extensões** e use **Pasta local** apontando para:
+No app, abra **Extensões** e use **Pasta local** apontando para:
 
 ```
 E:\DOCUMENTOS\Opencode\BetterStart\examples\hello-extension

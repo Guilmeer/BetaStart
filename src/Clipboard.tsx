@@ -44,7 +44,7 @@ function ClipboardThumb({ id }: { id: number }) {
     );
   }
   if (!src) return <span className="field-hint">{t("Loading image…")}</span>;
-  return <img className="clipboard-image-thumb" src={src} alt="Clipboard" />;
+  return <img className="clipboard-image-thumb" src={src} alt={t("Clipboard image")} />;
 }
 
 export function Clipboard({
@@ -140,12 +140,13 @@ export function Clipboard({
         <input
           className="text-input"
           placeholder={t("Filter history…")}
+          aria-label={t("Filter history…")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           spellCheck={false}
         />
         <button
-          className="secondary"
+          className="secondary danger"
           disabled={busy}
           onClick={clearUnpinned}
         >
@@ -164,7 +165,10 @@ export function Clipboard({
       )}
 
       {filtered.map((item) => (
-        <div className="ext-card" key={item.id}>
+        <div
+          className={`ext-card${item.pinned ? " is-pinned" : ""}`}
+          key={item.id}
+        >
           <div className="ext-card-row">
             <div className="clipboard-text">
               {item.kind === "image" ? (
@@ -206,7 +210,7 @@ export function Clipboard({
                 {item.pinned ? t("Unpin") : t("Pin")}
               </button>
               <button
-                className="secondary"
+                className="secondary danger"
                 disabled={busy}
                 onClick={() =>
                   void run(

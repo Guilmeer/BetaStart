@@ -118,6 +118,15 @@ pub fn mcp_revoke_client(state: State<AppState>, id: i64) -> AppResult<()> {
 }
 
 #[tauri::command]
+pub fn mcp_delete_client(state: State<AppState>, id: i64) -> AppResult<()> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Database("db lock envenenado".into()))?;
+    db::mcp::delete_client(&conn, id)
+}
+
+#[tauri::command]
 pub fn mcp_audit(state: State<AppState>, limit: Option<usize>) -> AppResult<Vec<McpAudit>> {
     let conn = state
         .db

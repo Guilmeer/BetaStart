@@ -3,6 +3,8 @@
 > Documento vivo de arquitetura. Toda decisão estrutural do projeto vive aqui.
 > Atualize este arquivo sempre que a arquitetura mudar.
 
+> Interface visual, tokens e padrões de UX: [`docs/DESIGN.md`](./docs/DESIGN.md).
+
 - **Nome:** Beta Start (identificador interno: `betastart`)
 - **Licença:** MIT
 - **Plataforma inicial:** Windows 10/11 · roadmap: Linux → macOS

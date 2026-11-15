@@ -9,6 +9,7 @@ interface HotkeyInputProps {
   excludeLauncher?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  label?: string;
 }
 
 function keyNameFromCode(code: string): string | null {
@@ -82,6 +83,7 @@ export function HotkeyInput({
   excludeLauncher,
   placeholder,
   disabled,
+  label,
 }: HotkeyInputProps) {
   const { t } = useI18n();
   const [listening, setListening] = useState(false);
@@ -201,6 +203,11 @@ export function HotkeyInput({
         }`}
         onClick={() => void (listening ? stop(true) : start())}
         disabled={disabled}
+        aria-label={
+          label
+            ? `${label}: ${draft || placeholder || t("Click to record")}`
+            : undefined
+        }
         title={error ?? t("Click and press the shortcut")}
       >
         {listening

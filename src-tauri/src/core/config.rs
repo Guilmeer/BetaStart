@@ -50,6 +50,10 @@ fn default_theme() -> String {
     "auto".into()
 }
 
+fn default_accent() -> String {
+    "teal".into()
+}
+
 fn default_language() -> String {
     "en".into()
 }
@@ -368,6 +372,8 @@ pub struct AppearanceConfig {
     pub theme: String,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_accent")]
+    pub accent: String,
 }
 
 impl Default for AppearanceConfig {
@@ -375,6 +381,7 @@ impl Default for AppearanceConfig {
         Self {
             theme: default_theme(),
             language: default_language(),
+            accent: default_accent(),
         }
     }
 }
@@ -457,6 +464,14 @@ impl Config {
         // Idioma suportado: inglês (padrão) ou português do Brasil.
         if self.appearance.language != "pt-BR" && self.appearance.language != "en" {
             self.appearance.language = default_language();
+            changed = true;
+        }
+        // Acentos de interface suportados.
+        if !matches!(
+            self.appearance.accent.as_str(),
+            "teal" | "blue" | "violet" | "rose" | "amber" | "slate"
+        ) {
+            self.appearance.accent = default_accent();
             changed = true;
         }
 

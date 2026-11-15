@@ -262,6 +262,7 @@ pub fn run() {
             mcp_api::mcp_create_client,
             mcp_api::mcp_list_clients,
             mcp_api::mcp_revoke_client,
+            mcp_api::mcp_delete_client,
             mcp_api::mcp_audit,
             mcp_api::mcp_exe_path,
             commands::get_status,

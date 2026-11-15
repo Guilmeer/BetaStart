@@ -145,6 +145,8 @@ export const api = {
   mcpAudit: (limit = 50) => invoke<McpAudit[]>("mcp_audit", { limit }),
   mcpRevokeClient: (id: number) =>
     invoke<void>("mcp_revoke_client", { id }),
+  mcpDeleteClient: (id: number) =>
+    invoke<void>("mcp_delete_client", { id }),
   mcpExePath: () => invoke<string>("mcp_exe_path"),
   listTasks: (
     project: string | null,

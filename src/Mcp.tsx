@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Icon } from "./Icons";
+import { Select } from "./Select";
 import { useI18n } from "./i18n";
 import type {
   McpAudit,
@@ -76,6 +78,12 @@ export function Mcp({ onBack }: { onBack: () => void }) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(() => setMessage(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
   const toggleScope = (scope: string) =>
     setScopes((current) =>
       current.includes(scope)
@@ -107,6 +115,27 @@ export function Mcp({ onBack }: { onBack: () => void }) {
     try {
       await api.mcpRevokeClient(client.id);
       await refresh();
+      setMessage(t("Key revoked. It can now be deleted."));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteClient = async (client: McpClient) => {
+    const confirmed = window.confirm(
+      t('Delete the revoked key "{name}"?\n\nThis cannot be undone.', {
+        name: client.name,
+      }),
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api.mcpDeleteClient(client.id);
+      await refresh();
+      setMessage(t("Revoked key deleted."));
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -163,6 +192,62 @@ export function Mcp({ onBack }: { onBack: () => void }) {
   const httpUrl = status
     ? `http://${status.host}:${status.port}`
     : "http://127.0.0.1:19000";
+
+  const activeClients = clients.filter((client) => !client.revoked);
+  const revokedClients = clients.filter((client) => client.revoked);
+
+  const renderClient = (client: McpClient) => {
+    const revoked = client.revoked;
+    return (
+      <div
+        className={`ext-card mcp-client${revoked ? " is-revoked" : ""}`}
+        key={client.id}
+      >
+        <div className="ext-card-row">
+          <div>
+            <strong>{client.name}</strong>{" "}
+            <span className={revoked ? "warn" : "ok"}>
+              {revoked ? t("revoked") : t("active")}
+            </span>
+            <div className="field-hint">
+              {client.scopes.length > 0
+                ? client.scopes
+                    .map((scope) => t(SCOPE_LABEL[scope] ?? scope))
+                    .join(", ")
+                : t("no scopes")}
+            </div>
+            <div className="field-hint">
+              {t("created {date}", {
+                date: new Date(client.createdAt * 1000).toLocaleString(locale),
+              })}
+              {client.lastSeen
+                ? ` · ${t("seen {date}", {
+                    date: new Date(client.lastSeen * 1000).toLocaleString(locale),
+                  })}`
+                : ""}
+            </div>
+          </div>
+          {revoked ? (
+            <button
+              className="secondary danger"
+              disabled={busy}
+              onClick={() => void deleteClient(client)}
+            >
+              {t("Delete key")}
+            </button>
+          ) : (
+            <button
+              className="secondary danger"
+              disabled={busy}
+              onClick={() => void revoke(client)}
+            >
+              {t("Revoke")}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <section className="mcp">
@@ -225,8 +310,8 @@ export function Mcp({ onBack }: { onBack: () => void }) {
           {t("Writes an AGENTS.md block that teaches your assistant to query this memory instead of re-reading files.")}
         </div>
         <div className="inline">
-          <select
-            className="text-input"
+          <Select
+            aria-label={t("AI guidance")}
             value={guidanceProject}
             onChange={(event) => setGuidanceProject(event.target.value)}
           >
@@ -236,7 +321,7 @@ export function Mcp({ onBack }: { onBack: () => void }) {
                 {project.title}
               </option>
             ))}
-          </select>
+          </Select>
           <button
             className="secondary"
             disabled={busy}
@@ -253,6 +338,7 @@ export function Mcp({ onBack }: { onBack: () => void }) {
         <input
           className="text-input"
           placeholder={t("Client name (e.g. Claude Desktop)")}
+          aria-label={t("Client name (e.g. Claude Desktop)")}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
@@ -306,72 +392,77 @@ export function Mcp({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      <h2>{t("Clients")}</h2>
-      {clients.length === 0 && (
-        <p className="field-hint">{t("No clients created.")}</p>
-      )}
-      {clients.map((client) => (
-        <div className="ext-card" key={client.id}>
-          <div className="ext-card-row">
-            <div>
-              <strong>{client.name}</strong>{" "}
-              <span className={client.revoked ? "warn" : "ok"}>
-                {client.revoked ? t("revoked") : t("active")}
-              </span>
-              <div className="field-hint">
-                {client.scopes.length > 0
-                  ? client.scopes.map((scope) => t(SCOPE_LABEL[scope] ?? scope)).join(", ")
-                  : t("no scopes")}
-              </div>
-              <div className="field-hint">
-                {t("created {date}", {
-                  date: new Date(client.createdAt * 1000).toLocaleString(locale),
-                })}
-                {client.lastSeen
-                  ? ` · ${t("seen {date}", {
-                      date: new Date(client.lastSeen * 1000).toLocaleString(locale),
-                    })}`
-                  : ""}
-              </div>
-            </div>
-            {!client.revoked && (
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={() => void revoke(client)}
-              >
-                {t("Revoke")}
-              </button>
-            )}
-          </div>
+      <div className="mcp-section-head">
+        <div>
+          <h2>{t("Active clients")}</h2>
+          <span className="field-hint">
+            {t("{count} active key(s)", { count: activeClients.length })}
+          </span>
         </div>
-      ))}
-
-      <h2>{t("Recent calls")}</h2>
-      {audit.length === 0 && (
-        <p className="field-hint">{t("No calls recorded yet.")}</p>
+      </div>
+      {activeClients.length === 0 && (
+        <p className="field-hint">{t("No active keys.")}</p>
       )}
-      {audit.map((entry) => (
-        <div className="ext-card" key={entry.id}>
-          <div className="ext-card-row">
-            <div>
-              <strong>{entry.tool}</strong>{" "}
-              <span className={entry.ok ? "ok" : "warn"}>
-                {entry.ok ? "ok" : t("error")}
-              </span>
-              <div className="field-hint">
-                {entry.clientName} ·{" "}
-                {new Date(entry.createdAt * 1000).toLocaleString(locale)}
-              </div>
-              {entry.detail && (
-                <div className="field-hint">{entry.detail}</div>
-              )}
-            </div>
-          </div>
-        </div>
-      ))}
+      {activeClients.map(renderClient)}
 
-      {message && <p className="settings-msg">{message}</p>}
+      {revokedClients.length > 0 && (
+        <details className="mcp-fold">
+          <summary>
+            <Icon className="fold-chevron" name="chevron-down" size={14} />
+            <strong>{t("Revoked keys")}</strong>
+            <span className="fold-count">{revokedClients.length}</span>
+            <span className="field-hint">
+              {t("Kept for history. Delete them to clean up.")}
+            </span>
+          </summary>
+          <div className="mcp-fold-body">
+            {revokedClients.map(renderClient)}
+          </div>
+        </details>
+      )}
+
+      <details className="mcp-fold">
+        <summary>
+          <Icon className="fold-chevron" name="chevron-down" size={14} />
+          <strong>{t("Recent calls")}</strong>
+          <span className="fold-count">{audit.length}</span>
+          <span className="field-hint">
+            {t("Audit of the latest tool calls.")}
+          </span>
+        </summary>
+        <div className="mcp-fold-body">
+          {audit.length === 0 ? (
+            <p className="field-hint">{t("No calls recorded yet.")}</p>
+          ) : (
+            <div className="audit-list">
+              {audit.map((entry) => (
+                <div
+                  className={`audit-row${entry.ok ? "" : " is-error"}`}
+                  key={entry.id}
+                >
+                  <span className={`audit-status ${entry.ok ? "ok" : "warn"}`}>
+                    {entry.ok ? "ok" : t("error")}
+                  </span>
+                  <code className="audit-tool">{entry.tool}</code>
+                  <span className="audit-client">{entry.clientName}</span>
+                  <time className="audit-time">
+                    {new Date(entry.createdAt * 1000).toLocaleString(locale)}
+                  </time>
+                  {entry.detail && (
+                    <span className="audit-detail">{entry.detail}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </details>
+
+      {message && (
+        <div className="toast" role="status" aria-live="polite">
+          {message}
+        </div>
+      )}
     </section>
   );
 }

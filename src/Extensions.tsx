@@ -304,7 +304,7 @@ export function Extensions({
                 {t("Open folder")}
               </button>
               <button
-                className="secondary"
+                className="secondary danger"
                 disabled={busy}
                 onClick={() => {
                   const confirmed = window.confirm(
@@ -378,6 +378,7 @@ export function Extensions({
           value={storeUrl}
           onChange={(event) => setStoreUrl(event.target.value)}
           placeholder={t("index.json URL or local path")}
+          aria-label={t("Store URL")}
           spellCheck={false}
         />
         <button className="secondary" disabled={busy} onClick={() => void loadStore()}>

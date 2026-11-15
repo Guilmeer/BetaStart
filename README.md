@@ -60,7 +60,7 @@ documented by [`examples/store/index.json`](./examples/store/index.json).
 
 ## Memory & Tasks
 
-Open **🧠** in the top bar. The window grows to fit the workspace.
+Open **Memory & Tasks** in the top bar. The window grows to fit the workspace.
 
 - The main memory lives in `global/`; each project lives in `projects/<slug>/`.
 - Everything is **real Markdown** with YAML frontmatter, so you can open, edit, and
@@ -87,7 +87,7 @@ Click a node to open its file. The project filter also filters the graph.
 
 ## Window Manager
 
-Open **🪟** in the top bar.
+Open **Window manager** in the top bar.
 
 ### Layouts
 
@@ -101,16 +101,17 @@ resolution changes.
 
 ### Per-app rules
 
-Choose an open window to fill the rule automatically, or configure the process,
-title, or class manually along with the target monitor and region. Rules are
-applied automatically when a new window appears, or on demand with
-**Apply rules now**.
+Choose an open window to fill the rule automatically, then pick a monitor and
+draw the target area directly on the monitor preview — or choose a preset such
+as left half, right half, or center. Rules can be enabled, edited, and disabled
+individually. They are applied automatically when a new window appears, or on
+demand with **Apply rules now**.
 
 You can also restore the last layout automatically when Beta Start starts.
 
 ## Clipboard
 
-Open **📋** in the top bar.
+Open **Clipboard** in the top bar.
 
 - Searchable history of copied **text and images**.
 - **Pin** important items so they stay at the top.
@@ -120,7 +121,7 @@ Open **📋** in the top bar.
 
 ## MCP (AI Integration)
 
-Open **🔌** in the top bar.
+Open **MCP** in the top bar.
 
 1. Create a client and choose its scopes.
 2. Generate a token. It is shown only once.
@@ -166,7 +167,8 @@ Other: `extensions.list`, `extensions.run`, `search.query`, `clipboard.list`,
 `settings.get`, `settings.set`.
 
 MCP also exposes **resources** (notes and tasks as Markdown), ready-made
-**prompts**, and an audit of recent calls in the 🔌 screen.
+**prompts**, and a collapsible audit of recent calls in the MCP screen. Revoked
+keys are kept in a collapsed section and can be deleted permanently.
 
 ### Token-efficient by default
 
@@ -188,11 +190,12 @@ re-reading files. Existing content is preserved.
 
 ## Settings
 
-Open **⚙** in the top bar.
+Open **Settings** in the top bar.
 
 - Launcher shortcut and Windows key mode.
 - **Language**: English (default) or **Português (Brasil)**.
 - Theme: dark, light, or automatic.
+- Accent color: teal (default), blue, violet, rose, amber, or slate.
 - Start with Windows and close-on-blur behavior.
 - Search settings: include apps/files, indexed folders, and result count.
 - Clipboard history limit.
@@ -205,7 +208,7 @@ Open **⚙** in the top bar.
 
 Beta Start can update itself from signed releases:
 
-1. Open **⚙ Settings → Updates**.
+1. Open **Settings → Updates**.
 2. Click **Check for updates**.
 3. If a new version is available, click **Download and install**.
 

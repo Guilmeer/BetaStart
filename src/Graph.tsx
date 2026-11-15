@@ -40,11 +40,11 @@ const MAX_ZOOM = 4;
 const TICK_INTERVAL = 33; // ~30 fps
 
 const COLORS: Record<string, string> = {
-  project: "#8b5cf6",
-  note: "#3b82f6",
-  task: "#ec4899",
-  tag: "#f59e0b",
-  missing: "#ef4444",
+  project: "var(--accent)",
+  note: "var(--info)",
+  task: "var(--ok)",
+  tag: "var(--graph-tag)",
+  missing: "var(--danger)",
 };
 
 function radiusOf(node: SimNode): number {
@@ -496,8 +496,8 @@ export function Graph({
                   y2={target.y ?? 0}
                   stroke={
                     link.kind === "link"
-                      ? "#22d3ee"
-                      : "rgba(255,255,255,0.13)"
+                      ? "var(--info)"
+                      : "var(--overlay-14)"
                   }
                   strokeWidth={
                     (link.kind === "link" ? 1.5 : 1) / view.k
@@ -533,13 +533,13 @@ export function Graph({
                 >
                   <circle
                     r={radius}
-                    fill={COLORS[node.kind] ?? "#94a3b8"}
+                    fill={COLORS[node.kind] ?? "var(--text-3)"}
                     stroke={
                       node.kind === "missing"
-                        ? "#fecaca"
+                        ? "var(--danger)"
                         : active
-                          ? "#ffffff"
-                          : "rgba(0,0,0,0.35)"
+                          ? "var(--text-strong)"
+                          : "var(--graph-node-stroke)"
                     }
                     strokeWidth={(active ? 1.6 : 0.8) / view.k}
                   />
@@ -551,8 +551,6 @@ export function Graph({
                       // Fonte em unidades do grafo: o zoom aumenta o texto.
                       fontSize={active ? 13 : 12}
                       fontWeight={active || node.kind === "project" ? 600 : 400}
-                      fill="#e2e2ea"
-                      stroke="rgba(8,8,12,0.9)"
                       strokeWidth={3}
                       paintOrder="stroke"
                       pointerEvents="none"
