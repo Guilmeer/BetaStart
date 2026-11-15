@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.3.0
+
+Redesign visual, temas de accent, regras de janela visuais e melhorias de UX no MCP.
+
+### Adicionado
+
+- **Novo sistema visual**: grafite neutro com accent teal, tipografia nativa do
+  Windows, ícones SVG próprios, favicon e marca atualizados.
+- **Temas de accent**: teal, azul, violeta, rosa, âmbar e ardósia, cada um com
+  variantes para os temas claro e escuro. A escolha é salva imediatamente.
+- **Tema claro** com contraste e superfícies reajustados.
+- **Editor visual de regras por app**: prévia do monitor, arraste para desenhar
+  a área, presets (metades, centro, cantos), captura de janela aberta e
+  coordenadas avançadas opcionais.
+- **Lista visual de regras**: mini-mapa da região, estado ativo/desativado,
+  edição, switch de ativação e exclusão.
+- **MCP**: “Últimas chamadas” agora é um painel retrátil e compacto, fechado por
+  padrão.
+- **MCP**: chaves revogadas ficam em um painel retrátil e podem ser excluídas
+  permanentemente (`mcp_delete_client`). Apenas chaves revogadas podem ser
+  apagadas.
+- **Configurações**: índice de seções com scroll spy, barra fixa de salvamento,
+  indicador de alterações não salvas e seletor de accent.
+- **Busca**: estado vazio com exemplos, botão de limpar, tipos de resultado,
+  ação contextual (“Open”, “Copy”, “Run”…), ARIA de combobox/listbox e
+  scroll automático do item selecionado.
+
+### Alterado
+
+- Janela do Window Manager ampliada para 900×640.
+- Componente compartilhado `Select` com chevron em SVG em vez de
+  `background-image`.
+- Notas usam a fonte de interface no corpo; o H1 duplicado do Markdown é ocultado.
+- Títulos de task viraram botões acessíveis; status têm `aria-pressed`.
+- Botões destrutivos usam `danger`; labels, `aria-label`s, foco visível,
+  `prefers-reduced-motion` e contraste foram revisados.
+- Mensagens de ações em MCP e Window Manager agora aparecem como toast.
+- Tema, accent e idioma são salvos imediatamente; o restante usa a barra de
+  salvamento com estado explícito.
+
+### Corrigido
+
+- Dropdowns não repetem mais a setinha dentro do popup nativo do WebView2.
+- Painéis retráteis do MCP não são mais esmagados pelo flex layout.
+- Documentação atualizada para os novos ícones e fluxos.
+
 ## 0.2.0
 
 MCP com custo de token controlado, índice incremental e correções de configuração.
